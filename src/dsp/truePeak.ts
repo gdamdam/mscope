@@ -67,6 +67,22 @@ function buildPolyphase(factor: number): { taps: number; coeffs: Float32Array } 
 }
 
 /**
+ * The polyphase coefficients depend only on `factor` and are otherwise constant,
+ * but truePeakDb runs on the realtime AudioWorklet thread. Memoize per factor so
+ * the sinc/Blackman bank is built once, not reallocated and recomputed on every
+ * frame. Exported for tests.
+ */
+const polyphaseCache = new Map<number, { taps: number; coeffs: Float32Array }>();
+export function getPolyphase(factor: number): { taps: number; coeffs: Float32Array } {
+  let cached = polyphaseCache.get(factor);
+  if (!cached) {
+    cached = buildPolyphase(factor);
+    polyphaseCache.set(factor, cached);
+  }
+  return cached;
+}
+
+/**
  * Band-limited upsample by an integer `factor` (>=1) via the polyphase
  * windowed-sinc filter. Output length is samples.length * factor; output[i*factor]
  * approximates the original sample i (phase 0). Edges use zero-padding.
@@ -74,7 +90,7 @@ function buildPolyphase(factor: number): { taps: number; coeffs: Float32Array } 
 export function upsample(samples: Float32Array, factor: number): Float32Array {
   const n = samples.length;
   if (factor <= 1 || n === 0) return Float32Array.from(samples);
-  const { taps, coeffs } = buildPolyphase(factor);
+  const { taps, coeffs } = getPolyphase(factor);
   const out = new Float32Array(n * factor);
   for (let i = 0; i < n; i++) {
     const left = i - (HALF_TAPS - 1); // index of the first tap's input sample

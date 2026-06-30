@@ -12,6 +12,10 @@ export interface GeneratorOptions {
 // Output amplitude for every generator: well below clip so the reference signal
 // is comfortable to monitor and leaves headroom in the graph.
 const AMPLITUDE = 0.25;
+// Audible-band bounds for the sine frequency, matching the UI's input min/max.
+const MIN_FREQUENCY = 20;
+const MAX_FREQUENCY = 20000;
+const DEFAULT_FREQUENCY = 1000;
 // One-second noise loop is long enough that the loop seam is inaudible while
 // keeping the generated buffer small.
 const NOISE_SECONDS = 1;
@@ -39,7 +43,14 @@ export class GeneratorInput extends BaseInput {
   constructor(opts: GeneratorOptions) {
     super();
     this.type = opts.type;
-    this.frequency = opts.frequency ?? 1000;
+    // Sanitize before this ever reaches osc.frequency.value: a non-finite value
+    // (e.g. an empty number field yields NaN via valueAsNumber) throws when
+    // assigned to an AudioParam, and out-of-range values are meaningless for a
+    // reference tone. Fall back to the default for non-finite, else clamp.
+    const f = opts.frequency;
+    this.frequency = Number.isFinite(f)
+      ? Math.min(MAX_FREQUENCY, Math.max(MIN_FREQUENCY, f as number))
+      : DEFAULT_FREQUENCY;
   }
 
   /** No device/permission to acquire — go straight idle -> live. */

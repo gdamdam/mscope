@@ -10,21 +10,29 @@ interface FakeTrack {
   removeEventListener: ReturnType<typeof vi.fn>;
   getSettings: ReturnType<typeof vi.fn>;
   dispatchEnded: () => void;
+  dispatchMute: () => void;
+  dispatchUnmute: () => void;
 }
 
 function makeTrack(kind: string): FakeTrack {
-  let endedHandler: (() => void) | null = null;
+  const handlers: Record<string, (() => void) | null> = {
+    ended: null,
+    mute: null,
+    unmute: null,
+  };
   return {
     kind,
     stop: vi.fn(),
     addEventListener: vi.fn((type: string, cb: () => void) => {
-      if (type === "ended") endedHandler = cb;
+      if (type in handlers) handlers[type] = cb;
     }),
     removeEventListener: vi.fn((type: string, cb: () => void) => {
-      if (type === "ended" && endedHandler === cb) endedHandler = null;
+      if (type in handlers && handlers[type] === cb) handlers[type] = null;
     }),
     getSettings: vi.fn(() => ({ channelCount: 2 })),
-    dispatchEnded: () => endedHandler?.(),
+    dispatchEnded: () => handlers.ended?.(),
+    dispatchMute: () => handlers.mute?.(),
+    dispatchUnmute: () => handlers.unmute?.(),
   };
 }
 
@@ -145,6 +153,34 @@ describe("MicrophoneInput", () => {
     track.dispatchEnded();
     expect(mic.state).toBe("ended");
     expect(seen).toContain("ended");
+  });
+
+  it("track 'mute' -> state muted, 'unmute' -> back to live", async () => {
+    const track = makeTrack("audio");
+    getUserMedia.mockResolvedValue(makeStream([track]));
+    const mic = new MicrophoneInput();
+    await mic.start();
+    expect(mic.state).toBe("live");
+    const seen: string[] = [];
+    mic.subscribe((s) => seen.push(s.state));
+    // Source-side mute (e.g. backgrounded tab share / device mute) silences the
+    // track without ending it; the UI must reflect "muted" rather than show "Live".
+    track.dispatchMute();
+    expect(mic.state).toBe("muted");
+    track.dispatchUnmute();
+    expect(mic.state).toBe("live");
+    expect(seen).toEqual(["muted", "live"]);
+  });
+
+  it("ignores a 'mute' event after the track has ended", async () => {
+    const track = makeTrack("audio");
+    getUserMedia.mockResolvedValue(makeStream([track]));
+    const mic = new MicrophoneInput();
+    await mic.start();
+    mic.stop();
+    expect(mic.state).toBe("ended");
+    track.dispatchMute(); // listener detached on teardown; state must stay ended
+    expect(mic.state).toBe("ended");
   });
 
   it("stop() stops tracks and sets state ended", async () => {

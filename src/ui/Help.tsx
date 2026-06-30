@@ -19,13 +19,40 @@ export function Help({ open, onClose }: HelpProps): JSX.Element | null {
   // Remember who had focus before opening so we can restore it on close.
   const restoreRef = useRef<HTMLElement | null>(null);
 
-  // Escape-to-close: listen only while open so we don't leak handlers.
+  // Escape-to-close + focus trap: listen only while open so we don't leak handlers.
   useEffect(() => {
     if (!open) return;
     function onKeyDown(e: KeyboardEvent): void {
       if (e.key === "Escape") {
         e.preventDefault();
         onClose();
+        return;
+      }
+      // Trap Tab inside the panel so focus can't reach the (obscured) page
+      // controls behind the modal — aria-modal="true" promises exactly this.
+      if (e.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusable = panel.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length === 0) {
+        // No focusable controls inside: keep focus on the panel itself.
+        e.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (active === first || active === panel) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (active === last) {
+        e.preventDefault();
+        first.focus();
       }
     }
     document.addEventListener("keydown", onKeyDown);

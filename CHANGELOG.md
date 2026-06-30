@@ -3,6 +3,26 @@
 All notable changes to mscope are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [1.0.1] — 2026-06-30
+
+Bug-fix patch — input robustness, accessibility, and realtime-thread hygiene.
+
+### Fixed
+- **Test-tone generator**: a non-finite frequency (e.g. an emptied Hz field → `NaN`)
+  no longer reaches `OscillatorNode.frequency.value` (which throws on non-finite input);
+  it falls back to the default and clamps finite values to the 20 Hz–20 kHz band.
+- **Help dialog**: now traps Tab / Shift+Tab focus inside the modal, honouring its
+  `aria-modal="true"` — keyboard focus can no longer escape to the controls behind it.
+- **Input status**: stream inputs (microphone, tab capture) now listen for track
+  `mute`/`unmute`, so a source-side mute shows **Muted** instead of a silent **Live**.
+
+### Changed
+- **True-peak**: the polyphase windowed-sinc FIR coefficients are memoized per oversample
+  factor instead of being rebuilt on every frame on the AudioWorklet thread.
+
+### Notes
+- 322 unit tests (9 new); build + lint clean.
+
 ## [1.0.0] — 2026-06-30
 
 First stable release — research-informed UI redesign + loudness-compliance metering.

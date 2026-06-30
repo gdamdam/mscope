@@ -26,6 +26,10 @@ export abstract class BaseInput implements AudioInputSource {
   // The track whose 'ended' we watch (mic: the audio track; tab: the audio track).
   private endedTrack: MediaStreamTrack | null = null;
   private endedHandler: (() => void) | null = null;
+  // Source-side mute/unmute on the same track (e.g. a backgrounded tab share or
+  // a device mute). Distinct from the monitor's output-gain mute.
+  private muteHandler: (() => void) | null = null;
+  private unmuteHandler: (() => void) | null = null;
 
   // Bumped on every teardown. A pending acquisition captures the generation up
   // front; if it no longer matches on resolve, the request was superseded.
@@ -111,12 +115,27 @@ export abstract class BaseInput implements AudioInputSource {
     const handler = (): void => this.handleTrackEnded();
     this.endedHandler = handler;
     endedTrack.addEventListener("ended", handler);
+    // Reflect source-side mute/unmute so the UI doesn't keep showing "Live" over
+    // a silent track (the "muted" state + label already exist for this).
+    const muteHandler = (): void => this.handleTrackMuted(true);
+    const unmuteHandler = (): void => this.handleTrackMuted(false);
+    this.muteHandler = muteHandler;
+    this.unmuteHandler = unmuteHandler;
+    endedTrack.addEventListener("mute", muteHandler);
+    endedTrack.addEventListener("unmute", unmuteHandler);
   }
 
   private handleTrackEnded(): void {
     // The device/share dropped out unexpectedly. Tear down and report "ended".
     this.teardown();
     this.setState("ended");
+  }
+
+  private handleTrackMuted(muted: boolean): void {
+    // Only toggle between live <-> muted; ignore late events once we've ended or
+    // errored (the listeners are detached on teardown, this is belt-and-braces).
+    if (this._state !== "live" && this._state !== "muted") return;
+    this.setState(muted ? "muted" : "live");
   }
 
   stop(): void {
@@ -138,11 +157,21 @@ export abstract class BaseInput implements AudioInputSource {
    */
   protected teardown(): void {
     this.generation += 1;
-    if (this.endedTrack && this.endedHandler) {
-      this.endedTrack.removeEventListener("ended", this.endedHandler);
+    if (this.endedTrack) {
+      if (this.endedHandler) {
+        this.endedTrack.removeEventListener("ended", this.endedHandler);
+      }
+      if (this.muteHandler) {
+        this.endedTrack.removeEventListener("mute", this.muteHandler);
+      }
+      if (this.unmuteHandler) {
+        this.endedTrack.removeEventListener("unmute", this.unmuteHandler);
+      }
     }
     this.endedTrack = null;
     this.endedHandler = null;
+    this.muteHandler = null;
+    this.unmuteHandler = null;
     this.sourceNode?.disconnect();
     this.sourceNode = null;
     this._stream?.getTracks().forEach((track) => track.stop());

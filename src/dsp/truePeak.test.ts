@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { truePeakDb, upsample } from "./truePeak";
+import { truePeakDb, upsample, getPolyphase } from "./truePeak";
 import { DB_FLOOR, linToDb } from "./util";
 
 /** Build `n` samples of a sine: amp*sin(2*pi*freq/fs * i + phase). */
@@ -81,6 +81,31 @@ describe("truePeakDb", () => {
       const tp = truePeakDb(s);
       const sp = samplePeakDb(s);
       expect(tp).toBeGreaterThanOrEqual(sp - tol);
+    }
+  });
+});
+
+describe("polyphase coefficient cache", () => {
+  it("reuses one coefficient set per factor instead of rebuilding each call", () => {
+    // truePeakDb runs on the realtime audio thread; the FIR coefficients must be
+    // built once and memoized, not reallocated on every call.
+    const a = getPolyphase(4);
+    const b = getPolyphase(4);
+    expect(b).toBe(a); // same cached object — no per-call rebuild/allocation
+  });
+
+  it("caches independently per factor", () => {
+    expect(getPolyphase(2)).not.toBe(getPolyphase(4));
+    expect(getPolyphase(2)).toBe(getPolyphase(2));
+  });
+
+  it("cached coefficients are a normalized sub-filter bank (unity DC gain per phase)", () => {
+    const { taps, coeffs } = getPolyphase(4);
+    expect(coeffs.length).toBe(4 * taps);
+    for (let p = 0; p < 4; p++) {
+      let sum = 0;
+      for (let t = 0; t < taps; t++) sum += coeffs[p * taps + t];
+      expect(sum).toBeCloseTo(1, 6);
     }
   });
 });

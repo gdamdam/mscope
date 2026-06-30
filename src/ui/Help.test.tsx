@@ -95,4 +95,45 @@ describe("Help", () => {
     expect(document.activeElement).toBe(panel);
     view.unmount();
   });
+
+  it("traps Tab so focus cannot reach controls behind the modal", async () => {
+    const view = render(createElement(Help, { open: true, onClose: () => {} }));
+    const close = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close help"]',
+    );
+    close?.focus();
+    expect(document.activeElement).toBe(close);
+    const tab = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    await flush(() => {
+      document.dispatchEvent(tab);
+    });
+    // Default Tab is suppressed (so focus can't escape) and stays inside the dialog.
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(close);
+    view.unmount();
+  });
+
+  it("wraps Shift+Tab back into the dialog", async () => {
+    const view = render(createElement(Help, { open: true, onClose: () => {} }));
+    const close = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close help"]',
+    );
+    close?.focus();
+    const tab = new KeyboardEvent("keydown", {
+      key: "Tab",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await flush(() => {
+      document.dispatchEvent(tab);
+    });
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(close);
+    view.unmount();
+  });
 });

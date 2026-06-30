@@ -145,6 +145,34 @@ describe("GeneratorInput", () => {
     expect(c.oscillators[0].frequency.value).toBe(1000);
   });
 
+  it("connect('sine') falls back to the default for a non-finite frequency (never assigns NaN to the AudioParam)", async () => {
+    // valueAsNumber on an empty number field is NaN; that must not reach
+    // osc.frequency.value, which throws on a non-finite assignment.
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      const gen = new GeneratorInput({ type: "sine", frequency: bad });
+      await gen.start();
+      const c = makeContext();
+      gen.connect(c.ctx);
+      const f = c.oscillators[0].frequency.value;
+      expect(Number.isFinite(f)).toBe(true);
+      expect(f).toBe(1000);
+    }
+  });
+
+  it("connect('sine') clamps out-of-range frequencies into the audible band", async () => {
+    const low = new GeneratorInput({ type: "sine", frequency: 1 });
+    await low.start();
+    const cl = makeContext();
+    low.connect(cl.ctx);
+    expect(cl.oscillators[0].frequency.value).toBe(20);
+
+    const high = new GeneratorInput({ type: "sine", frequency: 50000 });
+    await high.start();
+    const ch = makeContext();
+    high.connect(ch.ctx);
+    expect(ch.oscillators[0].frequency.value).toBe(20000);
+  });
+
   it("connect('white'): starts a looping buffer source filled with noise", async () => {
     const gen = new GeneratorInput({ type: "white" });
     await gen.start();
