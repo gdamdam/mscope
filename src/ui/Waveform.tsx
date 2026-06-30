@@ -32,6 +32,13 @@ const LABEL = "#6b757c";
 const BG = "#1c2023";
 const HALF = 0.5; // amplitude 0.5 ≈ -6 dBFS
 
+/** Blend a #rrggbb colour toward white by t∈[0,1] — lifts trace brightness. */
+function lighten(hex: string, t: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (c: number): number => Math.round(c + (255 - c) * t);
+  return `rgb(${mix((n >> 16) & 255)}, ${mix((n >> 8) & 255)}, ${mix(n & 255)})`;
+}
+
 /** Stereo oscilloscope: one min/max envelope row per channel, dBFS-scaled. */
 export function Waveform({
   getWaveform,
@@ -105,11 +112,12 @@ export function Waveform({
       const view = zoomF > 1 ? data.subarray(data.length - span) : data;
       const { min, max } = downsampleWaveform(view, plotW);
 
-      // Brightness maps to trace intensity only (alpha + lineWidth), no bloom.
-      const baseAlpha = 0.35 + 0.65 * bright;
+      // Brightness lifts trace intensity: alpha, line weight, and colour toward
+      // white at the top end so "max" reads genuinely bright (no bloom/glow).
+      const baseAlpha = 0.5 + 0.5 * bright;
       ctx.globalAlpha = frozen ? baseAlpha * 0.5 : baseAlpha;
-      ctx.strokeStyle = TRACE[ch] ?? TRACE[0];
-      ctx.lineWidth = 1 + 0.5 * bright;
+      ctx.strokeStyle = lighten(TRACE[ch] ?? TRACE[0], 0.5 * bright);
+      ctx.lineWidth = 1 + 2 * bright;
       ctx.beginPath();
       for (let x = 0; x < min.length; x++) {
         const yMax = mid - Math.max(-1, Math.min(1, max[x])) * amp;

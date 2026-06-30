@@ -13,10 +13,12 @@ import { SoloControl } from "./ui/SoloControl";
 import { Goniometer } from "./ui/Goniometer";
 import { Correlation } from "./ui/Correlation";
 import { Spectrum } from "./ui/Spectrum";
+import { SpectrumControls } from "./ui/SpectrumControls";
 import { Spectrogram } from "./ui/Spectrogram";
 import { Rta } from "./ui/Rta";
 import { AnalyserControls } from "./ui/AnalyserControls";
 import { Meters } from "./ui/Meters";
+import { LoudnessPanel } from "./ui/LoudnessPanel";
 import { DynamicsPanel } from "./ui/DynamicsPanel";
 import { SpectralPanel } from "./ui/SpectralPanel";
 import { LoudnessHistory } from "./ui/LoudnessHistory";
@@ -25,6 +27,12 @@ import { Histogram } from "./ui/Histogram";
 import { AbControls } from "./ui/AbControls";
 import { ReportPanel } from "./ui/ReportPanel";
 import { Logo } from "./ui/Logo";
+import { Help } from "./ui/Help";
+import {
+  LOUDNESS_TARGETS,
+  DEFAULT_TARGET,
+  type LoudnessTarget,
+} from "./analysis/targets";
 
 /** True when the page can request capture: HTTPS or localhost. */
 function isSecureContextOk(): boolean {
@@ -40,6 +48,11 @@ function tabCaptureSupported(): boolean {
   return Boolean(navigator.mediaDevices?.getDisplayMedia);
 }
 
+/** Small uppercase eyebrow separating functional groups, with a hairline rule. */
+function SectionLabel({ children }: { children: string }): JSX.Element {
+  return <p className="section-label">{children}</p>;
+}
+
 export default function App(): JSX.Element {
   // Inject the real engine factory; the hook never statically imports engine.ts.
   const scope = useScope(createScopeEngine);
@@ -48,10 +61,14 @@ export default function App(): JSX.Element {
   const tabOk = useMemo(tabCaptureSupported, []);
   const secureOk = useMemo(isSecureContextOk, []);
 
-  // Local view state for the oscilloscope (not part of the measurement model).
+  // Local view state for the oscilloscope + analyser (not part of the model).
   const [solo, setSolo] = useState<0 | 1 | "both">("both");
   const [brightness, setBrightness] = useState(1);
   const [zoom, setZoom] = useState(1);
+  const [target, setTarget] = useState<LoudnessTarget>(DEFAULT_TARGET);
+  const [tilt, setTilt] = useState(0);
+  const [peakHold, setPeakHold] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const {
     frame,
@@ -88,12 +105,30 @@ export default function App(): JSX.Element {
   // Spectrum / RTA / Histogram follow the soloed channel; "both" reads channel 0.
   const channel: 0 | 1 = solo === 1 ? 1 : 0;
 
+  // Session true-peak hold across channels (−Infinity until measured).
+  const maxTruePeakHoldDb = Math.max(
+    ...summary.channels.map((c) => c.maxTruePeakDb).filter(Number.isFinite),
+    -Infinity,
+  );
+
   return (
     <main className="scope">
       <header className="scope__head">
-        <Logo />
-        <span className="scope__sub">audio scope · diagnostic instrument</span>
+        <div className="scope__brand">
+          <Logo />
+          <span className="scope__sub">audio scope · diagnostic instrument</span>
+        </div>
+        <button
+          type="button"
+          className="btn help-btn"
+          onClick={() => setHelpOpen(true)}
+          aria-haspopup="dialog"
+        >
+          <span aria-hidden="true">?</span> Guide
+        </button>
       </header>
+
+      <Help open={helpOpen} onClose={() => setHelpOpen(false)} />
 
       {!secureOk && (
         <p className="disabled-note" role="note">
@@ -102,7 +137,7 @@ export default function App(): JSX.Element {
         </p>
       )}
 
-      <section className="scope__grid" aria-label="Source">
+      <section className="source-bar" aria-label="Source">
         <SourceSelector
           activeKind={source?.kind ?? null}
           tabCaptureSupported={tabOk}
@@ -110,6 +145,8 @@ export default function App(): JSX.Element {
           onCaptureTab={() => void captureTab()}
           onCaptureMic={() => void captureMic()}
         />
+        <ToneControls onStart={(opts) => void captureTone(opts)} busy={busy} />
+        <FilePicker onFile={(file) => void captureFile(file)} busy={busy} />
         <InputStatus
           kind={source?.kind ?? null}
           state={inputState}
@@ -117,100 +154,146 @@ export default function App(): JSX.Element {
           canStop={live || busy}
           onStop={stop}
         />
-        <ToneControls onStart={(opts) => void captureTone(opts)} busy={busy} />
-        <FilePicker onFile={(file) => void captureFile(file)} busy={busy} />
       </section>
 
-      <section className="scope__grid" aria-label="Oscilloscope">
-        <Waveform
-          getWaveform={scope.getWaveform}
-          channelCount={channelCount}
-          sampleRate={sampleRate}
-          active={live}
-          frozen={frozen}
-          brightness={brightness}
-          zoom={zoom}
-          solo={solo}
-        />
-        <ScopeControls
-          brightness={brightness}
-          zoom={zoom}
-          onBrightness={setBrightness}
-          onZoom={setZoom}
-        />
-        <SoloControl
-          value={solo}
-          onChange={setSolo}
-          channelCount={channelCount}
-        />
+      <section className="scope__hero" aria-label="Oscilloscope and loudness">
+        <div className="scope__hero-main">
+          <Waveform
+            getWaveform={scope.getWaveform}
+            channelCount={channelCount}
+            sampleRate={sampleRate}
+            active={live}
+            frozen={frozen}
+            brightness={brightness}
+            zoom={zoom}
+            solo={solo}
+          />
+          <ScopeControls
+            brightness={brightness}
+            zoom={zoom}
+            onBrightness={setBrightness}
+            onZoom={setZoom}
+          />
+          <SoloControl
+            value={solo}
+            onChange={setSolo}
+            channelCount={channelCount}
+          />
+        </div>
+        <div className="scope__rail">
+          <LoudnessPanel
+            loudness={loudness}
+            maxMomentaryLufs={summary.maxMomentaryLufs}
+            maxShortTermLufs={summary.maxShortTermLufs}
+            lra={dynamics?.lra ?? 0}
+            maxTruePeakHoldDb={maxTruePeakHoldDb}
+            target={target}
+            onTargetChange={(id) =>
+              setTarget(
+                LOUDNESS_TARGETS.find((t) => t.id === id) ?? DEFAULT_TARGET,
+              )
+            }
+            onResetHolds={resetSession}
+          />
+          <Meters channels={metrics?.channels ?? []} />
+        </div>
       </section>
 
-      <section className="scope__grid" aria-label="Stereo image">
-        <Goniometer
-          getWaveform={scope.getWaveform}
-          channelCount={channelCount}
-          active={live}
-          frozen={frozen}
-        />
-        <Correlation stereo={metrics?.stereo ?? null} />
+      <section aria-label="Frequency">
+        <SectionLabel>Frequency</SectionLabel>
+        <div className="scope__grid">
+          <Spectrum
+            getSpectrum={scope.getSpectrum}
+            sampleRate={sampleRate}
+            active={live}
+            frozen={frozen}
+            channel={channel}
+            tiltDbPerOct={tilt}
+            peakHold={peakHold}
+          />
+          <Spectrogram
+            getSpectrum={scope.getSpectrum}
+            sampleRate={sampleRate}
+            active={live}
+            frozen={frozen}
+          />
+          <div className="row scope__wide">
+            <SpectrumControls
+              tilt={tilt}
+              onTilt={setTilt}
+              peakHold={peakHold}
+              onPeakHold={setPeakHold}
+            />
+            <AnalyserControls
+              config={analyserConfig}
+              onChange={setAnalyserConfig}
+            />
+          </div>
+          <div className="scope__wide">
+            <Rta
+              getSpectrum={scope.getSpectrum}
+              sampleRate={sampleRate}
+              active={live}
+              frozen={frozen}
+              channel={channel}
+            />
+          </div>
+        </div>
       </section>
 
-      <section className="scope__grid" aria-label="Frequency">
-        <Spectrum
-          getSpectrum={scope.getSpectrum}
-          sampleRate={sampleRate}
-          active={live}
-          frozen={frozen}
-          channel={channel}
-        />
-        <Spectrogram
-          getSpectrum={scope.getSpectrum}
-          sampleRate={sampleRate}
-          active={live}
-          frozen={frozen}
-        />
-        <Rta
-          getSpectrum={scope.getSpectrum}
-          sampleRate={sampleRate}
-          active={live}
-          frozen={frozen}
-          channel={channel}
-        />
-        <AnalyserControls config={analyserConfig} onChange={setAnalyserConfig} />
+      <section aria-label="Sound field">
+        <SectionLabel>Sound field</SectionLabel>
+        <div className="scope__grid">
+          <Goniometer
+            getWaveform={scope.getWaveform}
+            channelCount={channelCount}
+            active={live}
+            frozen={frozen}
+          />
+          <div className="scope__rail">
+            <Correlation stereo={metrics?.stereo ?? null} />
+            <SpectralPanel spectral={spectral} />
+          </div>
+        </div>
       </section>
 
-      <section className="scope__grid" aria-label="Levels and loudness">
-        <Meters channels={metrics?.channels ?? []} loudness={loudness} />
-        <DynamicsPanel dynamics={dynamics} />
-        <SpectralPanel spectral={spectral} />
+      <section aria-label="Analysis">
+        <SectionLabel>Analysis</SectionLabel>
+        <div className="scope__grid">
+          <DynamicsPanel dynamics={dynamics} />
+          <Histogram
+            getWaveform={scope.getWaveform}
+            channelCount={channelCount}
+            active={live}
+            frozen={frozen}
+            channel={channel}
+          />
+        </div>
+      </section>
+
+      <section aria-label="Loudness over time">
+        <SectionLabel>Loudness over time</SectionLabel>
         <LoudnessHistory history={history} active={live} frozen={frozen} />
       </section>
 
-      <section className="scope__grid" aria-label="Diagnostics">
-        <Diagnostics metrics={metrics} />
-        <Histogram
-          getWaveform={scope.getWaveform}
-          channelCount={channelCount}
-          active={live}
-          frozen={frozen}
-          channel={channel}
-        />
-      </section>
-
-      <section className="scope__grid" aria-label="Session">
-        <MonitorControl gain={monitorGain} onChange={setMonitorGain} />
-        <AbControls
-          hasSnapshot={!!snapshotSummary}
-          onSnapshot={snapshot}
-          onClear={clearSnapshot}
-        />
-        <ReportPanel
-          summary={summary}
-          snapshotSummary={snapshotSummary}
-          onReset={resetSession}
-          exportJson={exportJson}
-          exportMarkdown={exportMarkdown}
-        />
+      <section aria-label="Session and diagnostics">
+        <SectionLabel>Session & diagnostics</SectionLabel>
+        <div className="scope__grid">
+          <Diagnostics metrics={metrics} />
+          <MonitorControl gain={monitorGain} onChange={setMonitorGain} />
+          <AbControls
+            hasSnapshot={!!snapshotSummary}
+            onSnapshot={snapshot}
+            onClear={clearSnapshot}
+          />
+          <ReportPanel
+            summary={summary}
+            snapshotSummary={snapshotSummary}
+            onReset={resetSession}
+            exportJson={exportJson}
+            exportMarkdown={exportMarkdown}
+          />
+        </div>
       </section>
 
       <footer>

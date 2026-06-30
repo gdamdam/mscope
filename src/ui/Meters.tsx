@@ -1,22 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChannelLevels } from "../audio/analysis/metrics";
-import type { LoudnessSnapshot } from "../dsp/loudness";
-import { fmtDb, fmtLufs } from "./format";
+import { fmtDb } from "./format";
 
 interface MetersProps {
   channels: ChannelLevels[];
-  loudness: LoudnessSnapshot | null;
 }
 
 /**
- * Per-channel level meters with peak-hold clip indication, plus the LUFS trio.
+ * Per-channel level meters with peak-hold clip indication.
+ *
+ * Pure levels (peak / RMS / true-peak) plus a sticky clip badge. The LUFS trio
+ * now lives in LoudnessPanel, the loudness rail's numeric hero — Meters is the
+ * companion "Levels" readout and owns no loudness state.
  *
  * clipCount on each ChannelLevels is CUMULATIVE (worklet running total). For the
  * per-channel "clip" badge we care about whether clipping is happening *now*
  * (clippedNow) and whether it has *ever* happened (peak-hold), not about summing
  * counts — so we hold a sticky "has clipped" flag derived from clippedNow.
  */
-export function Meters({ channels, loudness }: MetersProps): JSX.Element {
+export function Meters({ channels }: MetersProps): JSX.Element {
   // Peak-hold: sticky "clipped at some point" per channel, reset when channels
   // identity is cleared (e.g. session reset surfaces empty channels first).
   const [held, setHeld] = useState<boolean[]>([]);
@@ -33,7 +35,7 @@ export function Meters({ channels, loudness }: MetersProps): JSX.Element {
   }, [channels]);
 
   return (
-    <div className="panel" aria-label="Meters">
+    <div className="panel" aria-label="Levels">
       <p className="panel__title">Levels</p>
       <div className="meters">
         {channels.length === 0 && (
@@ -71,27 +73,7 @@ export function Meters({ channels, loudness }: MetersProps): JSX.Element {
           );
         })}
       </div>
-
-      <div className="lufs" aria-label="Loudness LUFS">
-        <Stat
-          k="LUFS-M"
-          v={loudness ? fmtLufs(loudness.momentaryLufs) : "—"}
-          unit="momentary"
-        />
-        <Stat
-          k="LUFS-S"
-          v={loudness ? fmtLufs(loudness.shortTermLufs) : "—"}
-          unit="short"
-        />
-        <Stat
-          k="LUFS-I"
-          v={loudness ? fmtLufs(loudness.integratedLufs) : "—"}
-          unit="integrated"
-        />
-      </div>
-      <p className="panel__note">
-        ITU-R BS.1770 K-weighted · measured at capture
-      </p>
+      <p className="panel__note">peak / RMS / true-peak · measured at capture</p>
     </div>
   );
 }

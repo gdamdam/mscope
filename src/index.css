@@ -74,13 +74,24 @@ body {
 
 .scope__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--gap);
   flex-wrap: wrap;
 }
 
+.scope__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+/* Version sits inline, left of the block-art wordmark. */
 .scope__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-family: var(--mono);
   font-size: 18px;
   letter-spacing: 0.06em;
@@ -92,6 +103,12 @@ body {
   color: var(--fg-mute);
   font-family: var(--mono);
   font-size: 12px;
+}
+
+/* Help button: the standard .btn look, anchored to the header's right edge. */
+.help-btn {
+  flex: none;
+  white-space: nowrap;
 }
 
 /* Block-art wordmark. Glyphs must sit flush, so kill letter-spacing/line-height
@@ -106,10 +123,8 @@ body {
   color: var(--accent);
 }
 
-/* Running build version, shown just under the wordmark. */
+/* Running build version, inline to the left of the wordmark. */
 .scope__version {
-  display: block;
-  margin-top: 3px;
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.04em;
@@ -144,6 +159,58 @@ body {
 
 .scope__wide {
   grid-column: 1 / -1;
+}
+
+/* Section eyebrow: a small uppercase label over a hairline rule that groups the
+   instrument into functional zones without the visual weight of a heading. */
+.section-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+  margin: 4px 0 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* Source bar: a single compact full-width row of capture controls that wraps. */
+.source-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap);
+  align-items: flex-start;
+}
+
+/* Hero + rail: the oscilloscope is the focal pane (~2fr); the loudness rail
+   (LoudnessPanel over Levels) rides alongside at ~1fr and collapses below it on
+   narrow viewports. */
+.scope__hero {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+
+.scope__hero-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+}
+
+/* Vertical stack of panels (loudness rail, sound-field right column). */
+.scope__rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .scope__hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .panel {
@@ -344,6 +411,115 @@ canvas {
   margin-top: 10px;
   border-top: 1px solid var(--border);
   padding-top: 10px;
+}
+
+/* --- LoudnessPanel: the loudness rail's numeric hero. --- */
+.loudness-hero {
+  display: flex;
+  margin: 2px 0 12px;
+}
+
+/* The integrated-LUFS focal value. Large tabular numerals; colour encodes
+   compliance against the selected delivery target (no glow, just hue). */
+.lufs-big {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--mono);
+  line-height: 1.05;
+}
+
+.lufs-big__num {
+  font-size: 40px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.lufs-big__unit {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+  margin-top: 4px;
+}
+
+.lufs-big__delta {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+  margin-top: 2px;
+}
+
+.lufs-big--in .lufs-big__num {
+  color: var(--ok);
+}
+.lufs-big--over .lufs-big__num {
+  color: var(--bad);
+}
+.lufs-big--under .lufs-big__num {
+  color: var(--warn);
+}
+.lufs-big--na .lufs-big__num {
+  color: var(--fg-mute);
+}
+
+.loudness-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.loudness-target__k {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+.loudness-target__select {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+}
+
+.loudness-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 8px;
+  margin-bottom: 12px;
+}
+
+/* The small trailing session-max "hold" beneath a current value. */
+.stat__hold {
+  display: block;
+  font-size: 10px;
+  color: var(--fg-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Latching status badge (e.g. true-peak over ceiling). */
+.badge {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  color: var(--fg-dim);
+}
+
+.badge--bad {
+  color: #fff;
+  background: var(--bad);
+  border-color: var(--bad);
 }
 
 .diag-list {

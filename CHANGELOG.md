@@ -3,6 +3,31 @@
 All notable changes to mscope are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [1.0.0] — 2026-06-30
+
+First stable release — research-informed UI redesign + loudness-compliance metering.
+
+### Added
+- **Lab-bench layout**: an oscilloscope **hero** + an always-visible **loudness/levels rail**,
+  with grouped sections (Frequency · Sound field · Analysis · Loudness over time · Diagnostics)
+  fronted by section labels — replacing the flat equal-weight stack.
+- **LoudnessPanel**: integrated-LUFS hero with **target presets** (EBU −23, Streaming −14,
+  Apple −16, ATSC −24) and pass/over/under colouring; max momentary/short-term holds; LRA;
+  a latching **true-peak-over** badge; reset holds.
+- **Spectrum**: **tilt** (e.g. +4.5 dB/oct so pink reads flat), **peak-hold**, and a cursor
+  readout of **frequency → musical note → dB**.
+- **In-app Help / Guide** explaining every view, metric, and control.
+- README rewritten in the mgrains layout (every feature documented) + screenshot.
+
+### Changed
+- Oscilloscope: max **brightness** now reads genuinely bright (alpha + weight + colour lift);
+  version moved into the header beside the wordmark.
+- **Levels** split from **Loudness** (the LUFS trio moved into LoudnessPanel).
+
+### Notes
+- 313 unit tests; build + lint clean. New UI verified at build/test level; visual + audible
+  behaviour is covered by the in-repo physical-QA checklist.
+
 ## [0.2.0] — 2026-06-30
 
 Big analysis + visualization expansion.
