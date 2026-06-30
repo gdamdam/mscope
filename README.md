@@ -1,6 +1,8 @@
 # mscope
 
-A local-first, in-browser **audio scope & diagnostic instrument**. Point it at a live source and read your signal — oscilloscope, spectrum, loudness, stereo field, and signal-health diagnostics — entirely in the browser. An *observational* meter: it never alters the audio it measures.
+A local-first, in-browser **audio scope & diagnostic instrument**. 
+Point it at a live source and read your signal — oscilloscope, spectrum, loudness, stereo field, and signal-health diagnostics — entirely in the browser. 
+An *observational* meter: it never alters the audio it measures.
 
 [![version](https://img.shields.io/badge/version-1.0.0-6c8f3a)](./package.json)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](./LICENSE)
