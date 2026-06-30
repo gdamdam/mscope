@@ -4,7 +4,7 @@ A local-first, in-browser **audio scope & diagnostic instrument**.
 
 Point it at a live source and read your signal: oscilloscope, spectrum, loudness, stereo field, and signal-health diagnostics. 
 
-Entirely in the browser. 
+Entirely in the Chrome browser. 
 
 An *observational* meter: it never alters the audio it measures.
 
