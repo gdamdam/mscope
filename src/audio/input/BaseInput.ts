@@ -91,7 +91,7 @@ export abstract class BaseInput implements AudioInputSource {
     this.notify();
   }
 
-  connect(ctx: AudioContext): AudioNode {
+  connect(ctx: AudioContext): AudioNode | Promise<AudioNode> {
     if (!this._stream) {
       throw new Error("connect() requires a live stream — call start() first.");
     }

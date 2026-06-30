@@ -399,9 +399,23 @@ canvas {
   gap: 10px;
 }
 
+.slider label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+  /* Fixed gutter so stacked sliders align their tracks. */
+  min-width: 5.5em;
+}
+
 .slider input[type="range"] {
   flex: 1;
   accent-color: var(--accent);
+}
+
+.slider .note {
+  min-width: 3em;
+  text-align: right;
 }
 
 .corr {
@@ -438,6 +452,41 @@ canvas {
   color: var(--warn);
   font-size: 12px;
   font-family: var(--mono);
+}
+
+/* Visually hidden, still in the accessibility tree (e.g. ToneControls labels). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* File drop target: a dashed well that brightens its border while dragging. */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+.dropzone--over {
+  border-color: var(--accent);
+}
+
+.dropzone__label {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-dim);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,4 +1,4 @@
-import { fmtDuration } from "./format";
+import { fmtDuration, fmtSigned } from "./format";
 import type { SessionSummary } from "../state/session";
 
 interface ReportPanelProps {
@@ -6,6 +6,22 @@ interface ReportPanelProps {
   onReset(): void;
   exportJson(): string;
   exportMarkdown(): string;
+  /** Held "A" snapshot for an A-vs-now comparison; null hides the delta line. */
+  snapshotSummary?: SessionSummary | null;
+}
+
+/** Signed delta of two metric values, or null if either is non-finite (DB_FLOOR). */
+function delta(now: number, then: number): number | null {
+  if (!Number.isFinite(now) || !Number.isFinite(then)) return null;
+  return now - then;
+}
+
+/** Highest sample peak (dBFS) across all channels; DB_FLOOR when no channels. */
+function maxPeakDb(s: SessionSummary): number {
+  return s.channels.reduce(
+    (m, c) => Math.max(m, c.maxPeakDb),
+    Number.NEGATIVE_INFINITY,
+  );
 }
 
 /**
@@ -36,7 +52,16 @@ export function ReportPanel({
   onReset,
   exportJson,
   exportMarkdown,
+  snapshotSummary = null,
 }: ReportPanelProps): JSX.Element {
+  // Compact A-vs-now deltas, shown only while an "A" snapshot is held.
+  const dLufs = snapshotSummary
+    ? delta(summary.integratedLufs, snapshotSummary.integratedLufs)
+    : null;
+  const dPeak = snapshotSummary
+    ? delta(maxPeakDb(summary), maxPeakDb(snapshotSummary))
+    : null;
+
   return (
     <div className="panel" aria-label="Report">
       <p className="panel__title">Session</p>
@@ -45,6 +70,13 @@ export function ReportPanel({
           Duration {fmtDuration(summary.durationMs)}
         </span>
       </div>
+      {snapshotSummary && (
+        <p className="note" style={{ marginTop: 6 }} aria-label="A versus now">
+          A → now ·{" "}
+          ΔLUFS-I {dLufs === null ? "—" : `${fmtSigned(dLufs, 1)} LU`} ·{" "}
+          Δmax-peak {dPeak === null ? "—" : `${fmtSigned(dPeak, 1)} dB`}
+        </p>
+      )}
       <div className="row" style={{ marginTop: 8 }}>
         <button
           type="button"

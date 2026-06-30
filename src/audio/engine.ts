@@ -20,6 +20,7 @@ import { Monitor } from "./monitor";
 import { ScopeAnalyser } from "./analysis/analyser";
 import type { AudioInputSource } from "./input/AudioInputSource";
 import type {
+  AnalyserConfig,
   AnalysisFrame,
   CreateScopeEngine,
   EngineState,
@@ -69,7 +70,8 @@ class ScopeEngineImpl implements ScopeEngine {
     this.teardownSource();
 
     // Build the new source node and fan it out to the three branches.
-    const node = source.connect(ctx);
+    // connect() may be async (e.g. audio-file decode).
+    const node = await source.connect(ctx);
     this.currentSource = source;
     this.sourceNode = node;
 
@@ -127,6 +129,23 @@ class ScopeEngineImpl implements ScopeEngine {
 
   getMonitorGain(): number {
     return this.monitor?.getGain() ?? 0;
+  }
+
+  setAnalyserConfig(cfg: Partial<AnalyserConfig>): void {
+    if (cfg.fftSize !== undefined) this.opts.fftSize = cfg.fftSize;
+    if (cfg.smoothing !== undefined) this.opts.smoothing = cfg.smoothing;
+    // Rebuild the analyser with the new settings and reconnect the live tap
+    // (to the source for input, and to the silent sink so it's still pulled).
+    if (this.analyser) {
+      const ctx = this.manager.getContext();
+      this.analyser.dispose();
+      this.analyser = new ScopeAnalyser(ctx, {
+        fftSize: this.opts.fftSize,
+        smoothing: this.opts.smoothing,
+      });
+      if (this.silentSink) this.analyser.sinkTo(this.silentSink);
+      if (this.sourceNode) this.analyser.connect(this.sourceNode);
+    }
   }
 
   getWaveform(channel: 0 | 1): Float32Array {

@@ -18,6 +18,7 @@ const KIND_LABEL: Record<AudioInputKind, string> = {
   microphone: "Microphone",
   "media-stream": "Media stream",
   "audio-file": "Audio file",
+  generator: "Test tone",
 };
 
 const STATE_LABEL: Record<AudioInputState, string> = {

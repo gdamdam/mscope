@@ -26,6 +26,12 @@ export interface ScopeEngineOptions {
   smoothing?: number;
 }
 
+/** Runtime-adjustable analyser settings (FFT resolution vs responsiveness). */
+export interface AnalyserConfig {
+  fftSize: number;
+  smoothing: number;
+}
+
 export interface ScopeEngine {
   readonly state: EngineState;
 
@@ -40,6 +46,9 @@ export interface ScopeEngine {
   /** Audible monitor gain in [0,1]. Default 0 (muted) to avoid doubling/feedback. */
   setMonitorGain(gain: number): void;
   getMonitorGain(): number;
+
+  /** Reconfigure the visual AnalyserNode (FFT size / smoothing) at runtime. */
+  setAnalyserConfig(cfg: Partial<AnalyserConfig>): void;
 
   /** Latest time-domain (waveform) data for a channel, from the AnalyserNode. */
   getWaveform(channel: 0 | 1): Float32Array;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AnalysisFrame,
+  AnalyserConfig,
   CreateScopeEngine,
   EngineState,
   ScopeEngine,
@@ -9,9 +10,34 @@ import type {
   AudioInputSource,
   AudioInputState,
 } from "../audio/input/AudioInputSource";
-import { MicrophoneInput, TabCaptureInput } from "../audio/input";
+import {
+  FileInput,
+  GeneratorInput,
+  MicrophoneInput,
+  TabCaptureInput,
+  type GeneratorOptions,
+} from "../audio/input";
 import { MeasurementSession, type SessionSummary } from "../state/session";
 import { toJson, toMarkdown } from "../state/report";
+import {
+  HISTORY_CAP,
+  type DynamicsMetrics,
+  type ScopeHistory,
+  type SpectralMetrics,
+} from "../analysis/derived";
+import { computeSpectral, dbSpectrumToLinear } from "../dsp/spectral";
+import { crestFactorDb, plrDb } from "../dsp/dynamics";
+import { loudnessRange } from "../dsp/loudnessRange";
+import { estimateNoiseFloorDb } from "../dsp/noiseFloor";
+
+/** Analyser defaults — match ScopeEngineOptions (fftSize 2048, smoothing 0.8). */
+const DEFAULT_ANALYSER_CONFIG: AnalyserConfig = { fftSize: 2048, smoothing: 0.8 };
+
+/** Push `v` onto a ring, dropping the oldest once it exceeds `cap`. */
+function pushCapped(ring: number[], v: number, cap: number): void {
+  ring.push(v);
+  if (ring.length > cap) ring.shift();
+}
 
 /**
  * Public surface of the scope, consumed by the components. Kept deliberately
@@ -31,10 +57,26 @@ export interface UseScope {
   /** Audible monitor gain in [0,1]; 0 == muted (default). */
   monitorGain: number;
 
+  /** Latest spectral descriptors (channel 0), or null before the first frame. */
+  spectral: SpectralMetrics | null;
+  /** Latest dynamics descriptors, or null before the first frame. */
+  dynamics: DynamicsMetrics | null;
+  /** Rolling loudness/level history rings (newest last). */
+  history: ScopeHistory;
+  /** Current visual AnalyserNode configuration. */
+  analyserConfig: AnalyserConfig;
+  /** Manually held session snapshot (via snapshot()), or null. */
+  snapshotSummary: SessionSummary | null;
+
   captureTab(): Promise<void>;
   captureMic(): Promise<void>;
+  captureTone(opts: GeneratorOptions): Promise<void>;
+  captureFile(file: File | Blob): Promise<void>;
   stop(): void;
   setMonitorGain(g: number): void;
+  setAnalyserConfig(cfg: Partial<AnalyserConfig>): void;
+  snapshot(): void;
+  clearSnapshot(): void;
   resetSession(): void;
   exportJson(): string;
   exportMarkdown(): string;
@@ -74,6 +116,14 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
   const unsubInputRef = useRef<(() => void) | null>(null);
   // Wall-clock of the previous frame, to derive deltaMs for session ingest.
   const lastFrameTsRef = useRef<number | null>(null);
+  // Rolling history rings, mutated in place per frame; a fresh ScopeHistory
+  // object is set into state each frame so React sees a new reference.
+  const historyRef = useRef<ScopeHistory>({
+    momentaryLufs: [],
+    shortTermLufs: [],
+    peakDb: [],
+    rmsDb: [],
+  });
 
   const [frame, setFrame] = useState<AnalysisFrame | null>(null);
   const [source, setSource] = useState<AudioInputSource | null>(null);
@@ -83,6 +133,19 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
     sessionRef.current!.summary(),
   );
   const [monitorGain, setMonitorGainState] = useState<number>(0);
+  const [spectral, setSpectral] = useState<SpectralMetrics | null>(null);
+  const [dynamics, setDynamics] = useState<DynamicsMetrics | null>(null);
+  const [history, setHistory] = useState<ScopeHistory>(() => ({
+    momentaryLufs: [],
+    shortTermLufs: [],
+    peakDb: [],
+    rmsDb: [],
+  }));
+  const [analyserConfig, setAnalyserConfigState] = useState<AnalyserConfig>(
+    () => ({ ...DEFAULT_ANALYSER_CONFIG }),
+  );
+  const [snapshotSummary, setSnapshotSummary] =
+    useState<SessionSummary | null>(null);
 
   // Create + own the engine for each mount, subscribe to frames, and dispose on
   // unmount (see the StrictMode note above). clipCount is cumulative; we ingest
@@ -92,6 +155,9 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
     engineRef.current = engine;
     setEngineState(engine.state);
     setMonitorGainState(engine.getMonitorGain());
+    // Push the default analyser config so engine + state agree from mount.
+    engine.setAnalyserConfig(DEFAULT_ANALYSER_CONFIG);
+    setAnalyserConfigState({ ...DEFAULT_ANALYSER_CONFIG });
 
     const unsubFrame = engine.onFrame((f) => {
       const now =
@@ -103,6 +169,53 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
       sessionRef.current!.ingest(f.metrics, deltaMs, f.loudness);
       setFrame(f);
       setSummary(sessionRef.current!.summary());
+
+      // --- Append to history rings (cap each, drop oldest), then derive. ---
+      const channels = f.metrics.channels;
+      const c0 = channels[0];
+      const ring = historyRef.current;
+      pushCapped(ring.momentaryLufs, f.loudness.momentaryLufs, HISTORY_CAP);
+      pushCapped(ring.shortTermLufs, f.loudness.shortTermLufs, HISTORY_CAP);
+      if (c0) {
+        pushCapped(ring.peakDb, c0.peakDb, HISTORY_CAP);
+        pushCapped(ring.rmsDb, c0.rmsDb, HISTORY_CAP);
+      }
+      // Fresh object reference so React re-renders consumers.
+      setHistory({
+        momentaryLufs: ring.momentaryLufs.slice(),
+        shortTermLufs: ring.shortTermLufs.slice(),
+        peakDb: ring.peakDb.slice(),
+        rmsDb: ring.rmsDb.slice(),
+      });
+
+      // Dynamics: crest per channel, PLR from loudest peak, LRA + noise floor
+      // from the accumulated history.
+      const maxPeakDb = channels.reduce(
+        (m, c) => Math.max(m, c.peakDb),
+        Number.NEGATIVE_INFINITY,
+      );
+      setDynamics({
+        crestDb: channels.map((c) => crestFactorDb(c.peakDb, c.rmsDb)),
+        plrDb: plrDb(maxPeakDb, f.loudness.integratedLufs),
+        lra: loudnessRange(ring.shortTermLufs),
+        noiseFloorDb: estimateNoiseFloorDb(ring.rmsDb),
+      });
+
+      // Spectral: pull the live dB spectrum (channel 0) and derive descriptors.
+      // fftSize is bins*2 (AnalyserNode returns fftSize/2 magnitude bins).
+      const dbSpec = engine.getSpectrum(0);
+      if (dbSpec.length > 0) {
+        setSpectral(
+          computeSpectral(
+            dbSpectrumToLinear(dbSpec),
+            f.metrics.sampleRate,
+            dbSpec.length * 2,
+          ),
+        );
+      } else {
+        setSpectral(null);
+      }
+
       setEngineState(engine.state);
     });
 
@@ -162,6 +275,20 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
     await attach(new MicrophoneInput());
   }, [attach]);
 
+  const captureTone = useCallback(
+    async (opts: GeneratorOptions) => {
+      await attach(new GeneratorInput(opts));
+    },
+    [attach],
+  );
+
+  const captureFile = useCallback(
+    async (file: File | Blob) => {
+      await attach(new FileInput(file));
+    },
+    [attach],
+  );
+
   const stop = useCallback(() => {
     const engine = engineRef.current;
     if (!engine) return;
@@ -185,10 +312,43 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
     setMonitorGainState(engine.getMonitorGain());
   }, []);
 
+  const setAnalyserConfig = useCallback((cfg: Partial<AnalyserConfig>) => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.setAnalyserConfig(cfg);
+    setAnalyserConfigState((prev) => ({ ...prev, ...cfg }));
+  }, []);
+
+  const snapshot = useCallback(() => {
+    // summary() returns a fresh, fully-serializable object each call, so we can
+    // hold it directly as the snapshot.
+    setSnapshotSummary(sessionRef.current!.summary());
+  }, []);
+
+  const clearSnapshot = useCallback(() => {
+    setSnapshotSummary(null);
+  }, []);
+
   const resetSession = useCallback(() => {
     sessionRef.current!.reset();
     engineRef.current?.reset(); // clear worklet accumulators (cumulative clip count, integrated LUFS)
     lastFrameTsRef.current = null;
+    // Clear the history rings and derived readouts. snapshotSummary is a manual
+    // hold and is intentionally left untouched.
+    historyRef.current = {
+      momentaryLufs: [],
+      shortTermLufs: [],
+      peakDb: [],
+      rmsDb: [],
+    };
+    setHistory({
+      momentaryLufs: [],
+      shortTermLufs: [],
+      peakDb: [],
+      rmsDb: [],
+    });
+    setSpectral(null);
+    setDynamics(null);
     setSummary(sessionRef.current!.summary());
   }, []);
 
@@ -222,10 +382,20 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
     engineState,
     summary,
     monitorGain,
+    spectral,
+    dynamics,
+    history,
+    analyserConfig,
+    snapshotSummary,
     captureTab,
     captureMic,
+    captureTone,
+    captureFile,
     stop,
     setMonitorGain,
+    setAnalyserConfig,
+    snapshot,
+    clearSnapshot,
     resetSession,
     exportJson,
     exportMarkdown,

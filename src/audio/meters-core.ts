@@ -30,6 +30,7 @@ import {
 import { linToDb } from "../dsp/util";
 import { stereoMetrics } from "../dsp/stereo";
 import { truePeakDb } from "../dsp/truePeak";
+import { GlitchDetector } from "../dsp/glitch";
 import { LoudnessMeter, type LoudnessSnapshot } from "../dsp/loudness";
 import {
   type AnalysisConfig,
@@ -91,6 +92,8 @@ export class MetersCore {
   private analyzers: LevelAnalyzer[] = [];
   /** Per-channel frame-window sample accumulators, parallel to `analyzers`. */
   private frameBuffers: FrameBuffer[] = [];
+  /** Per-channel gapless discontinuity (click/dropout) detectors. */
+  private glitchDetectors: GlitchDetector[] = [];
   private channelCount = 0;
 
   /** Total samples (per channel) processed since construction/reset. */
@@ -112,6 +115,7 @@ export class MetersCore {
     const initialCap = Math.max(128, Math.round(this.sampleRate * 0.128));
     this.analyzers = Array.from({ length: n }, () => new LevelAnalyzer(this.cfg));
     this.frameBuffers = Array.from({ length: n }, () => new FrameBuffer(initialCap));
+    this.glitchDetectors = Array.from({ length: n }, () => new GlitchDetector());
     this.channelCount = n;
   }
 
@@ -131,6 +135,7 @@ export class MetersCore {
       const block = channels[c] ?? channels[0];
       this.analyzers[c].process(block);
       this.frameBuffers[c].append(block);
+      this.glitchDetectors[c].process(block);
     }
 
     // Loudness is a stereo meter; mono => right === null.
@@ -190,6 +195,9 @@ export class MetersCore {
       channels,
       stereo,
       signal,
+      glitchCounts: this.glitchDetectors
+        .slice(0, this.channelCount)
+        .map((d) => d.count),
     };
 
     for (const fb of this.frameBuffers) fb.clear();
@@ -207,6 +215,7 @@ export class MetersCore {
       channels: [silentLevels],
       stereo: null,
       signal: classifySignal(silentLevels.rmsDb, this.cfg),
+      glitchCounts: [0],
     };
   }
 
@@ -221,6 +230,7 @@ export class MetersCore {
   reset(): void {
     for (const a of this.analyzers) a.reset();
     for (const fb of this.frameBuffers) fb.clear();
+    for (const g of this.glitchDetectors) g.reset();
     this.loudness.reset();
     this.totalSamples = 0;
   }

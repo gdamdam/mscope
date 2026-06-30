@@ -20,6 +20,10 @@ export function Diagnostics({ metrics }: DiagnosticsProps): JSX.Element {
   const clipTotal = metrics
     ? metrics.channels.reduce((m, c) => Math.max(m, c.clipCount), 0)
     : 0;
+  // Cumulative discontinuity (click/dropout) count; summed across channels.
+  // The field is optional until the worklet's glitch detector is wired in — 0 then.
+  const glitchTotal =
+    metrics?.glitchCounts?.reduce((sum, n) => sum + n, 0) ?? 0;
   const silent = metrics?.signal.silent ?? false;
   const lowSignal = metrics?.signal.lowSignal ?? false;
 
@@ -42,6 +46,10 @@ export function Diagnostics({ metrics }: DiagnosticsProps): JSX.Element {
         <li>
           <span className="k">Clipped samples (cumulative)</span>
           <span className="v">{metrics ? clipTotal : "—"}</span>
+        </li>
+        <li>
+          <span className="k">Glitches (cumulative)</span>
+          <span className="v">{metrics ? glitchTotal : "—"}</span>
         </li>
       </ul>
 

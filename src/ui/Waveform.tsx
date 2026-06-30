@@ -14,6 +14,12 @@ interface WaveformProps {
   sampleRate?: number;
   /** Hold + flag the last frame when the source has ended. */
   frozen?: boolean;
+  /** Trace intensity in [0,1]; maps to alpha/lineWidth only — no glow. Default 1. */
+  brightness?: number;
+  /** Horizontal time-base zoom (>=1): show the latest len/zoom samples. Default 1. */
+  zoom?: number;
+  /** Solo a single channel's trace; "both" draws every channel. Default "both". */
+  solo?: 0 | 1 | "both";
 }
 
 const WIDTH = 600;
@@ -33,11 +39,17 @@ export function Waveform({
   active,
   sampleRate = 0,
   frozen = false,
+  brightness = 1,
+  zoom = 1,
+  solo = "both",
 }: WaveformProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const channels = Math.max(1, Math.min(2, channelCount || 1));
   const height = ROW_H * channels;
   const plotW = WIDTH - PAD_L;
+  // Clamp the visual controls so a wild prop value can't break rendering.
+  const bright = Math.max(0, Math.min(1, brightness));
+  const zoomF = Math.max(1, zoom);
 
   const draw = (): void => {
     const canvas = canvasRef.current;
@@ -82,13 +94,22 @@ export function Waveform({
       ctx.fillStyle = TRACE[ch] ?? TRACE[0];
       ctx.fillText(channels === 2 ? (ch === 0 ? "L" : "R") : "M", PAD_L + 2, top + 2);
 
+      // Solo: when a single channel is selected, every other row shows only its
+      // grid + labels (drawn above) and skips the trace. "both" draws all.
+      if (solo !== "both" && solo !== ch) continue;
+
       const data = getWaveform(ch as 0 | 1);
       if (!data || data.length === 0) continue;
-      const { min, max } = downsampleWaveform(data, plotW);
+      // Zoom: render only the latest len/zoom samples, stretched across plotW.
+      const span = Math.max(1, Math.floor(data.length / zoomF));
+      const view = zoomF > 1 ? data.subarray(data.length - span) : data;
+      const { min, max } = downsampleWaveform(view, plotW);
 
-      ctx.globalAlpha = frozen ? 0.5 : 1;
+      // Brightness maps to trace intensity only (alpha + lineWidth), no bloom.
+      const baseAlpha = 0.35 + 0.65 * bright;
+      ctx.globalAlpha = frozen ? baseAlpha * 0.5 : baseAlpha;
       ctx.strokeStyle = TRACE[ch] ?? TRACE[0];
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1 + 0.5 * bright;
       ctx.beginPath();
       for (let x = 0; x < min.length; x++) {
         const yMax = mid - Math.max(-1, Math.min(1, max[x])) * amp;
@@ -100,21 +121,35 @@ export function Waveform({
       ctx.globalAlpha = 1;
     }
 
-    // Analysis-window duration (bottom-right), derived from the AnalyserNode size.
+    // Analysis-window duration (bottom-right), derived from the AnalyserNode size
+    // and the current zoom (we render only the latest len/zoom samples).
     const probe = getWaveform(0);
     if (sampleRate > 0 && probe && probe.length > 0) {
-      const ms = (probe.length / sampleRate) * 1000;
+      const shown = Math.max(1, Math.floor(probe.length / zoomF));
+      const ms = (shown / sampleRate) * 1000;
       ctx.fillStyle = LABEL;
       ctx.textAlign = "right";
       ctx.textBaseline = "bottom";
-      ctx.fillText(`~${ms.toFixed(0)} ms window`, WIDTH - 4, height - 2);
+      const label =
+        zoomF > 1
+          ? `~${ms.toFixed(0)} ms window · ${zoomF}×`
+          : `~${ms.toFixed(0)} ms window`;
+      ctx.fillText(label, WIDTH - 4, height - 2);
     }
 
     if (frozen) drawFrozenBadge(ctx, PAD_L);
   };
 
   // Redraw on the rAF loop while active; static single draw under reduced motion.
-  useScopeDraw(draw, active, [channels, height, sampleRate, frozen]);
+  useScopeDraw(draw, active, [
+    channels,
+    height,
+    sampleRate,
+    frozen,
+    bright,
+    zoomF,
+    solo,
+  ]);
 
   // Also draw once on mount / when size changes so the cleared view is correct.
   useEffect(() => {

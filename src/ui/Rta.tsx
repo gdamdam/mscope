@@ -1,12 +1,13 @@
 import { useEffect, useRef } from "react";
-import { binToFrequency } from "../audio/analysis/analyser";
+import { bandEnergiesDb, dbSpectrumToLinear } from "../dsp/spectral";
+import { THIRD_OCTAVE_CENTERS } from "../analysis/derived";
 import { useScopeDraw } from "./useAnimationFrame";
 import { drawFrozenBadge } from "./canvasOverlay";
 
-interface SpectrumProps {
+interface RtaProps {
   /** Pull the latest dB magnitude spectrum for a channel from the engine. */
   getSpectrum(channel: 0 | 1): Float32Array;
-  /** Sample rate (Hz) for axis labelling; 0 until known. */
+  /** Sample rate (Hz) for band binning; 0 until known. */
   sampleRate: number;
   active: boolean;
   /** Hold + flag the last frame when the source has ended. */
@@ -24,23 +25,22 @@ const PLOT_H = HEIGHT - PAD_B;
 const BG = "#1c2023";
 const GRID = "#232a2e";
 const LABEL = "#6b757c";
-const TRACE = "#5fb0c8";
+const BAR = "#5fb0c8"; // teal, matches Spectrum trace
 const DB_MIN = -100;
 const DB_MAX = 0;
-const F_MIN = 20;
+// Frequency ticks labelled under the bars at their band centre.
 const HZ_TICKS = [100, 1000, 10000];
 
-/** Magnitude spectrum (channel 0) on a log-frequency axis, dBFS vertical. */
-export function Spectrum({
+/** Real-time analyzer: 1/3-octave band energies (channel 0) as vertical bars. */
+export function Rta({
   getSpectrum,
   sampleRate,
   active,
   frozen = false,
   channel = 0,
-}: SpectrumProps): JSX.Element {
+}: RtaProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sr = sampleRate > 0 ? sampleRate : 48000;
-  const nyquist = sr / 2;
 
   const draw = (): void => {
     const canvas = canvasRef.current;
@@ -67,44 +67,40 @@ export function Spectrum({
       ctx.fillText(String(db), PAD_L - 4, y);
     }
 
-    // Frequency gridlines + bottom labels (100 Hz, 1k, 10k).
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    for (const f of HZ_TICKS) {
-      if (f >= nyquist) continue;
-      const x = freqToX(f, nyquist);
-      ctx.strokeStyle = GRID;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, PLOT_H);
-      ctx.stroke();
-      ctx.fillStyle = LABEL;
-      ctx.fillText(f >= 1000 ? `${f / 1000}k` : String(f), x, PLOT_H + 3);
+    const n = THIRD_OCTAVE_CENTERS.length;
+    // Each band gets an equal-width column; small gap between bars.
+    const slot = PLOT_W / n;
+    const barW = Math.max(1, slot - 1);
+
+    const dbSpec = getSpectrum(channel);
+    if (dbSpec && dbSpec.length > 0) {
+      const mag = dbSpectrumToLinear(dbSpec);
+      const bands = bandEnergiesDb(
+        mag,
+        sr,
+        dbSpec.length * 2,
+        THIRD_OCTAVE_CENTERS,
+      );
+      ctx.globalAlpha = frozen ? 0.5 : 1;
+      ctx.fillStyle = BAR;
+      for (let c = 0; c < n; c++) {
+        const x = PAD_L + c * slot;
+        const yTop = dbToY(bands[c]);
+        const h = PLOT_H - yTop;
+        if (h > 0) ctx.fillRect(x, yTop, barW, h);
+      }
+      ctx.globalAlpha = 1;
     }
 
-    const spec = getSpectrum(channel);
-    if (spec && spec.length > 0) {
-      const bins = spec.length;
-      const fftSize = bins * 2;
-      ctx.globalAlpha = frozen ? 0.5 : 1;
-      ctx.strokeStyle = TRACE;
-      ctx.lineWidth = 1.25;
-      ctx.beginPath();
-      let started = false;
-      for (let i = 1; i < bins; i++) {
-        const f = binToFrequency(i, fftSize, sr);
-        if (f < F_MIN) continue;
-        const x = freqToX(f, nyquist);
-        const y = dbToY(spec[i]);
-        if (!started) {
-          ctx.moveTo(x, y);
-          started = true;
-        } else {
-          ctx.lineTo(x, y);
-        }
-      }
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+    // Frequency ticks at the closest band centre (drawn after bars).
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = LABEL;
+    for (const f of HZ_TICKS) {
+      const c = nearestBandIndex(f);
+      if (c < 0) continue;
+      const x = PAD_L + c * slot + slot / 2;
+      ctx.fillText(f >= 1000 ? `${f / 1000}k` : String(f), x, PLOT_H + 3);
     }
 
     if (frozen) drawFrozenBadge(ctx, PAD_L);
@@ -117,15 +113,15 @@ export function Spectrum({
   }, []);
 
   return (
-    <div className="panel" aria-label="Spectrum">
-      <p className="panel__title">Spectrum · 20 Hz–Nyquist · dBFS</p>
+    <div className="panel" aria-label="RTA">
+      <p className="panel__title">RTA · ⅓-octave</p>
       <div className="canvas-wrap">
         <canvas
           ref={canvasRef}
           width={WIDTH}
           height={HEIGHT}
           role="img"
-          aria-label={`Frequency-domain magnitude spectrum, channel ${channel}`}
+          aria-label={`Real-time analyzer, one-third-octave band energies, channel ${channel}`}
         />
       </div>
     </div>
@@ -138,9 +134,16 @@ function dbToY(db: number): number {
   return PLOT_H - t * PLOT_H;
 }
 
-function freqToX(f: number, fMax: number): number {
-  const t =
-    (Math.log10(f) - Math.log10(F_MIN)) /
-    (Math.log10(fMax) - Math.log10(F_MIN));
-  return PAD_L + Math.max(0, Math.min(1, t)) * PLOT_W;
+/** Index of the 1/3-octave centre nearest `f` (log distance), or -1 if none. */
+function nearestBandIndex(f: number): number {
+  let best = -1;
+  let bestDist = Infinity;
+  for (let i = 0; i < THIRD_OCTAVE_CENTERS.length; i++) {
+    const d = Math.abs(Math.log10(THIRD_OCTAVE_CENTERS[i]) - Math.log10(f));
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  }
+  return best;
 }

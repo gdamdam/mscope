@@ -16,6 +16,7 @@ vi.mock("../audio/engine", () => {
           gain = g;
         },
         getMonitorGain: () => gain,
+        setAnalyserConfig: vi.fn(),
         getWaveform: () => new Float32Array(2048),
         getSpectrum: () => new Float32Array(1024).fill(-120),
         onFrame: () => () => {},

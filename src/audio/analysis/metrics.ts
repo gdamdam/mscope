@@ -18,5 +18,8 @@ export interface MetricsSnapshot {
   channels: ChannelLevels[];  // length === channelCount
   stereo: StereoMetrics | null; // null if mono
   signal: SignalState;
-  // NOTE: LUFS fields (momentary/shortTerm/integrated) added later in M4 — do NOT add now.
+  /** Cumulative discontinuity (click/dropout) count per channel since reset.
+   *  Optional: present once the worklet's glitch detector is wired in. */
+  glitchCounts?: number[];
+  // NOTE: LUFS lives in the separate LoudnessSnapshot, not here.
 }

@@ -36,6 +36,7 @@ export class FakeScopeEngine implements ScopeEngine {
   getMonitorGain(): number {
     return this.gain;
   }
+  setAnalyserConfig = vi.fn();
 
   getWaveform(): Float32Array {
     return new Float32Array(2048);
@@ -141,6 +142,7 @@ export function stubCanvas(): () => void {
   };
   const original = proto.getContext;
   const ctx2d = {
+    // properties
     fillStyle: "",
     strokeStyle: "",
     lineWidth: 1,
@@ -148,12 +150,35 @@ export function stubCanvas(): () => void {
     textAlign: "",
     textBaseline: "",
     globalAlpha: 1,
+    lineCap: "",
+    lineJoin: "",
+    // path + draw
     fillRect: vi.fn(),
+    clearRect: vi.fn(),
     beginPath: vi.fn(),
+    closePath: vi.fn(),
     moveTo: vi.fn(),
     lineTo: vi.fn(),
+    arc: vi.fn(),
+    rect: vi.fn(),
     stroke: vi.fn(),
+    fill: vi.fn(),
     fillText: vi.fn(),
+    setLineDash: vi.fn(),
+    measureText: vi.fn(() => ({ width: 0 })),
+    // transforms / state
+    save: vi.fn(),
+    restore: vi.fn(),
+    translate: vi.fn(),
+    scale: vi.fn(),
+    rotate: vi.fn(),
+    setTransform: vi.fn(),
+    // image data (spectrogram scrolling)
+    drawImage: vi.fn(),
+    getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 })),
+    putImageData: vi.fn(),
+    createImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 })),
+    createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
   };
   proto.getContext = vi.fn(() => ctx2d);
   return () => {
