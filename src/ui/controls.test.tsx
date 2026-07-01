@@ -37,10 +37,14 @@ describe("AnalyserControls", () => {
     const view = render(
       createElement(AnalyserControls, { config, onChange }),
     );
-    const select = view.container.querySelector(
-      'select[aria-label="FFT size"]',
-    ) as HTMLSelectElement;
-    setValue(select, "8192", "change");
+    const combo = view.container.querySelector(
+      '[role="combobox"][aria-label="FFT size"]',
+    ) as HTMLElement;
+    act(() => combo.click());
+    const opt = Array.from(
+      view.container.querySelectorAll('[role="option"]'),
+    ).find((o) => o.textContent?.trim() === "8192") as HTMLElement;
+    act(() => opt.click());
     expect(onChange).toHaveBeenCalledWith({ fftSize: 8192 });
     view.unmount();
   });

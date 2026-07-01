@@ -3,6 +3,22 @@
 All notable changes to mscope are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [1.0.2] — 2026-06-30
+
+Patch — consistent cross-platform dropdowns.
+
+### Changed
+- **Dropdowns**: the four native `<select>` controls (spectrum tilt, FFT size,
+  reference-signal type, loudness target) are replaced with a custom
+  `Select` component. Native option lists are drawn by the OS and can't be
+  styled, so they looked different on every browser/OS; the new control renders
+  its own list styled with the app's tokens, so it looks identical everywhere.
+  Implements the ARIA select-only combobox pattern (arrow/Home/End/type-ahead
+  navigation, Enter/Space to commit, Escape to dismiss, click-outside to close).
+
+### Notes
+- 328 unit tests (6 new for `Select`); build + lint clean.
+
 ## [1.0.1] — 2026-06-30
 
 Bug-fix patch — input robustness, accessibility, and realtime-thread hygiene.

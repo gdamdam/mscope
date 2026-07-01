@@ -24,8 +24,14 @@ describe("ToneControls", () => {
     const onStart = vi.fn<(opts: GeneratorOptions) => void>();
     const view = render(createElement(ToneControls, { onStart }));
 
-    const type = view.container.querySelector("select") as HTMLSelectElement;
-    await flush(() => setValue(type, "pink"));
+    const combo = view.container.querySelector(
+      '[role="combobox"]',
+    ) as HTMLElement;
+    await flush(() => combo.click());
+    const pink = Array.from(
+      view.container.querySelectorAll('[role="option"]'),
+    ).find((o) => o.textContent?.includes("Pink")) as HTMLElement;
+    await flush(() => pink.click());
 
     const generate = view.container.querySelector(
       'button[type="button"]',
@@ -63,9 +69,11 @@ describe("ToneControls", () => {
     const generate = view.container.querySelector(
       'button[type="button"]',
     ) as HTMLButtonElement;
-    const type = view.container.querySelector("select") as HTMLSelectElement;
+    const combo = view.container.querySelector(
+      '[role="combobox"]',
+    ) as HTMLElement;
     expect(generate.disabled).toBe(true);
-    expect(type.disabled).toBe(true);
+    expect(combo.getAttribute("aria-disabled")).toBe("true");
     view.unmount();
   });
 });

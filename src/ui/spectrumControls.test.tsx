@@ -4,18 +4,6 @@ import { render } from "./testRender";
 import { act } from "react";
 import { SpectrumControls } from "./SpectrumControls";
 
-/** Drive a controlled <select> the way a real change gesture would. */
-function setSelect(el: HTMLSelectElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(
-    HTMLSelectElement.prototype,
-    "value",
-  )?.set;
-  setter?.call(el, value);
-  act(() => {
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-}
-
 describe("SpectrumControls", () => {
   it("fires onTilt with the chosen slope", () => {
     const onTilt = vi.fn();
@@ -27,10 +15,14 @@ describe("SpectrumControls", () => {
         onPeakHold: () => {},
       }),
     );
-    const select = view.container.querySelector(
-      'select[aria-label="Spectrum tilt"]',
-    ) as HTMLSelectElement;
-    setSelect(select, "4.5");
+    const combo = view.container.querySelector(
+      '[role="combobox"][aria-label="Spectrum tilt"]',
+    ) as HTMLElement;
+    act(() => combo.click());
+    const pink = Array.from(
+      view.container.querySelectorAll('[role="option"]'),
+    ).find((o) => o.textContent?.includes("+4.5")) as HTMLElement;
+    act(() => pink.click());
     expect(onTilt).toHaveBeenCalledWith(4.5);
     view.unmount();
   });

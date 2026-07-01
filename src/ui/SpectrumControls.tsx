@@ -1,3 +1,5 @@
+import { Select } from "./Select";
+
 interface SpectrumControlsProps {
   /** Spectral tilt in dB/oct (pivot 1 kHz); 0 = flat dBFS. */
   tilt: number;
@@ -30,19 +32,14 @@ export function SpectrumControls({
       <p className="panel__title">Spectrum</p>
       <div className="row">
         <label htmlFor="spectrum-tilt">Tilt</label>
-        <select
+        <Select
           id="spectrum-tilt"
-          className="btn"
-          value={String(tilt)}
-          onChange={(e) => onTilt(Number(e.target.value))}
-          aria-label="Spectrum tilt"
-        >
-          {TILT_OPTIONS.map((o) => (
-            <option key={o.value} value={String(o.value)}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          triggerClassName="btn"
+          value={tilt}
+          options={TILT_OPTIONS}
+          onChange={onTilt}
+          ariaLabel="Spectrum tilt"
+        />
         <button
           type="button"
           className="btn"

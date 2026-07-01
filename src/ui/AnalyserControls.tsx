@@ -1,4 +1,5 @@
 import type { AnalyserConfig } from "../audio/engineTypes";
+import { Select } from "./Select";
 
 interface AnalyserControlsProps {
   config: AnalyserConfig;
@@ -23,18 +24,13 @@ export function AnalyserControls({
       <div className="row">
         <label className="slider">
           <span>FFT size</span>
-          <select
-            className="btn"
+          <Select
+            triggerClassName="btn"
             value={config.fftSize}
-            onChange={(e) => onChange({ fftSize: Number(e.target.value) })}
-            aria-label="FFT size"
-          >
-            {FFT_SIZES.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
+            options={FFT_SIZES.map((n) => ({ value: n, label: String(n) }))}
+            onChange={(fftSize) => onChange({ fftSize })}
+            ariaLabel="FFT size"
+          />
         </label>
       </div>
       <div className="slider">

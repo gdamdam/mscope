@@ -7,6 +7,7 @@ import {
   type LoudnessTarget,
 } from "../analysis/targets";
 import { fmtDb, fmtLufs } from "./format";
+import { Select } from "./Select";
 
 interface LoudnessPanelProps {
   /** Current momentary/short-term/integrated reading, or null until measured. */
@@ -86,21 +87,20 @@ export function LoudnessPanel({
         </span>
       </div>
 
-      <label className="loudness-target">
+      <div className="loudness-target">
         <span className="loudness-target__k">target</span>
-        <select
-          className="loudness-target__select"
+        <Select
+          fill
+          triggerClassName="loudness-target__select"
           value={target.id}
-          onChange={(e) => onTargetChange(e.target.value)}
-          aria-label="Loudness target"
-        >
-          {LOUDNESS_TARGETS.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.label} ({t.lufs} LUFS · {t.truePeakDb} dBTP)
-            </option>
-          ))}
-        </select>
-      </label>
+          options={LOUDNESS_TARGETS.map((t) => ({
+            value: t.id,
+            label: `${t.label} (${t.lufs} LUFS · ${t.truePeakDb} dBTP)`,
+          }))}
+          onChange={onTargetChange}
+          ariaLabel="Loudness target"
+        />
+      </div>
 
       <div className="loudness-grid">
         <HoldStat

@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import type { GeneratorOptions } from "../audio/input";
 import type { GeneratorType } from "../audio/input/GeneratorInput";
+import { Select, type SelectOption } from "./Select";
 
 interface ToneControlsProps {
   /** Start a synthetic reference signal with the chosen options. */
@@ -11,6 +12,12 @@ interface ToneControlsProps {
 
 const DEFAULT_FREQUENCY = 1000;
 
+const SIGNAL_OPTIONS: SelectOption<GeneratorType>[] = [
+  { value: "sine", label: "Sine" },
+  { value: "white", label: "White noise" },
+  { value: "pink", label: "Pink noise" },
+];
+
 /**
  * Reference-signal source controls: pick sine/white/pink and (for sine) a
  * frequency, then Generate. Frequency is only meaningful for a sine tone, so we
@@ -19,7 +26,6 @@ const DEFAULT_FREQUENCY = 1000;
 export function ToneControls({ onStart, busy = false }: ToneControlsProps): JSX.Element {
   const [type, setType] = useState<GeneratorType>("sine");
   const [frequency, setFrequency] = useState(DEFAULT_FREQUENCY);
-  const typeId = useId();
   const freqId = useId();
 
   const generate = (): void => {
@@ -30,20 +36,14 @@ export function ToneControls({ onStart, busy = false }: ToneControlsProps): JSX.
     <div className="panel" role="group" aria-label="Reference signal">
       <p className="panel__title">Reference signal</p>
       <div className="row">
-        <label htmlFor={typeId} className="sr-only">
-          Signal type
-        </label>
-        <select
-          id={typeId}
-          className="btn"
+        <Select<GeneratorType>
+          triggerClassName="btn"
           value={type}
+          options={SIGNAL_OPTIONS}
           disabled={busy}
-          onChange={(e) => setType(e.target.value as GeneratorType)}
-        >
-          <option value="sine">Sine</option>
-          <option value="white">White noise</option>
-          <option value="pink">Pink noise</option>
-        </select>
+          onChange={setType}
+          ariaLabel="Signal type"
+        />
         {type === "sine" && (
           <>
             <label htmlFor={freqId} className="sr-only">
