@@ -1,8 +1,27 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, type Mock } from "vitest";
 import { createElement } from "react";
 import { render } from "./testRender";
 import { Goniometer } from "./Goniometer";
 import { stubCanvas } from "./testFakes";
+
+// Logical geometry mirrored from Goniometer.tsx: SIZE 260, PAD 18.
+const CX = 130;
+const CY = 130;
+const RADIUS = 112;
+/** Dual-mono convention: sample s plots at y = cy − s·√2·radius. */
+const K = Math.SQRT2 * RADIUS;
+
+function getCtx(container: HTMLElement): { moveTo: Mock; lineTo: Mock } {
+  const canvas = container.querySelector("canvas") as HTMLCanvasElement;
+  return canvas.getContext("2d") as unknown as { moveTo: Mock; lineTo: Mock };
+}
+
+/** Whether `fn` was called with (x, ~y) within a small tolerance. */
+function calledWithApprox(fn: Mock, x: number, y: number): boolean {
+  return fn.mock.calls.some(
+    (c) => c[0] === x && Math.abs((c[1] as number) - y) < 1e-6,
+  );
+}
 
 /** A simple stereo source: distinct L/R so the rotation has something to plot. */
 function stereoWaveform(channel: 0 | 1): Float32Array {
@@ -56,6 +75,61 @@ describe("Goniometer", () => {
       }),
     );
     expect(view.container.querySelector("canvas")).not.toBeNull();
+    view.unmount();
+  });
+
+  it("scales the mono trace to the signal's amplitude (dual-mono convention)", () => {
+    restore = stubCanvas();
+    const view = render(
+      createElement(Goniometer, {
+        getWaveform: monoWaveform, // full-scale sine: peaks at exactly ±1
+        channelCount: 1,
+        active: false,
+      }),
+    );
+    const ctx = getCtx(view.container);
+    expect(calledWithApprox(ctx.moveTo, CX, CY - K)).toBe(true);
+    expect(calledWithApprox(ctx.lineTo, CX, CY + K)).toBe(true);
+    view.unmount();
+  });
+
+  it("draws a shorter mono trace for a quieter signal", () => {
+    restore = stubCanvas();
+    const quiet = (channel: 0 | 1): Float32Array => {
+      const buf = monoWaveform(channel);
+      for (let i = 0; i < buf.length; i++) buf[i] *= 0.25;
+      return buf;
+    };
+    const view = render(
+      createElement(Goniometer, {
+        getWaveform: quiet,
+        channelCount: 1,
+        active: false,
+      }),
+    );
+    const ctx = getCtx(view.container);
+    expect(calledWithApprox(ctx.moveTo, CX, CY - 0.25 * K)).toBe(true);
+    // No full-scale trace for a -12 dB signal.
+    expect(calledWithApprox(ctx.moveTo, CX, CY - K)).toBe(false);
+    view.unmount();
+  });
+
+  it("draws no mono trace for silence", () => {
+    restore = stubCanvas();
+    const view = render(
+      createElement(Goniometer, {
+        getWaveform: () => new Float32Array(256),
+        channelCount: 1,
+        active: false,
+      }),
+    );
+    const ctx = getCtx(view.container);
+    // The only vertical strokes on the M axis are the axis guides (cy ± radius).
+    const axisMoves = ctx.moveTo.mock.calls.filter((c) => c[0] === CX);
+    expect(axisMoves.length).toBeGreaterThan(0);
+    expect(axisMoves.every((c) => c[1] === CY - RADIUS)).toBe(true);
+    const axisLines = ctx.lineTo.mock.calls.filter((c) => c[0] === CX);
+    expect(axisLines.every((c) => c[1] === CY + RADIUS)).toBe(true);
     view.unmount();
   });
 

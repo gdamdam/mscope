@@ -49,7 +49,7 @@ export interface LoudnessSnapshot {
 }
 
 /** Direct-form-I biquad coefficients, a0 normalised to 1. */
-interface Biquad {
+export interface Biquad {
   b0: number;
   b1: number;
   b2: number;
@@ -58,43 +58,44 @@ interface Biquad {
 }
 
 /**
- * High-shelf biquad via the RBJ/Audio-EQ-Cookbook formulation, used here for
- * BS.1770 Stage 1. `gainDb` is the shelf gain, `f0` the mid-corner, `q` the
- * shelf slope parameter.
+ * High-shelf biquad for BS.1770 Stage 1, using the De Man / pyloudnorm
+ * bilinear-transform derivation. NOTE: this is NOT the RBJ cookbook shelf —
+ * the RBJ sqrt(A)-slope form does NOT reproduce the BS.1770-4 spec-table
+ * coefficients (it is ~0.26 dB off at 1 kHz). The Vb exponent 0.499666774155
+ * is the published De Man constant that matches the spec table to ~1e-12.
  */
 function highShelf(f0: number, q: number, gainDb: number, fs: number): Biquad {
-  const a = Math.pow(10, gainDb / 40); // amplitude (sqrt of power gain)
-  const w0 = (2 * Math.PI * f0) / fs;
-  const cosw = Math.cos(w0);
-  const sinw = Math.sin(w0);
-  const alpha = sinw / (2 * q);
-  const sqrtA = Math.sqrt(a);
+  const k = Math.tan((Math.PI * f0) / fs);
+  const vh = Math.pow(10, gainDb / 20);
+  const vb = Math.pow(vh, 0.499666774155);
+  const a0 = 1 + k / q + k * k;
 
-  const b0 = a * (a + 1 + (a - 1) * cosw + 2 * sqrtA * alpha);
-  const b1 = -2 * a * (a - 1 + (a + 1) * cosw);
-  const b2 = a * (a + 1 + (a - 1) * cosw - 2 * sqrtA * alpha);
-  const a0 = a + 1 - (a - 1) * cosw + 2 * sqrtA * alpha;
-  const a1 = 2 * (a - 1 - (a + 1) * cosw);
-  const a2 = a + 1 - (a - 1) * cosw - 2 * sqrtA * alpha;
-
-  return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+  return {
+    b0: (vh + (vb * k) / q + k * k) / a0,
+    b1: (2 * (k * k - vh)) / a0,
+    b2: (vh - (vb * k) / q + k * k) / a0,
+    a1: (2 * (k * k - 1)) / a0,
+    a2: (1 - k / q + k * k) / a0,
+  };
 }
 
-/** High-pass biquad (RBJ cookbook), used for BS.1770 Stage 2 (RLB HPF). */
+/**
+ * High-pass biquad for BS.1770 Stage 2 (RLB HPF), bilinear derivation.
+ * The numerator is the UNNORMALIZED [1, -2, 1] — exactly what the BS.1770-4
+ * spec table uses. (Normalizing b by a0, as RBJ does, introduces a constant
+ * ≈ -0.043 dB passband offset relative to the spec.)
+ */
 function highPass(f0: number, q: number, fs: number): Biquad {
-  const w0 = (2 * Math.PI * f0) / fs;
-  const cosw = Math.cos(w0);
-  const sinw = Math.sin(w0);
-  const alpha = sinw / (2 * q);
+  const k = Math.tan((Math.PI * f0) / fs);
+  const a0 = 1 + k / q + k * k;
 
-  const b0 = (1 + cosw) / 2;
-  const b1 = -(1 + cosw);
-  const b2 = (1 + cosw) / 2;
-  const a0 = 1 + alpha;
-  const a1 = -2 * cosw;
-  const a2 = 1 - alpha;
-
-  return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+  return {
+    b0: 1,
+    b1: -2,
+    b2: 1,
+    a1: (2 * (k * k - 1)) / a0,
+    a2: (1 - k / q + k * k) / a0,
+  };
 }
 
 /** Analog-prototype parameters reproducing the BS.1770-4 48 kHz coefficients. */
@@ -104,8 +105,11 @@ const SHELF_GAIN_DB = 3.999843853973347;
 const HPF_F0 = 38.13547087602444;
 const HPF_Q = 0.5003270373238773;
 
-/** Build the two K-weighting biquads for a given sample rate. */
-function kWeightStages(fs: number): [Biquad, Biquad] {
+/**
+ * Build the two K-weighting biquads for a given sample rate.
+ * Exported so tests can compare against the BS.1770-4 spec tables directly.
+ */
+export function kWeightCoefficients(fs: number): [Biquad, Biquad] {
   return [
     highShelf(SHELF_F0, SHELF_Q, SHELF_GAIN_DB, fs),
     highPass(HPF_F0, HPF_Q, fs),
@@ -131,11 +135,11 @@ function biquadMagDb(bq: Biquad, f: number, fs: number): number {
 
 /**
  * Combined K-weighting magnitude gain (dB) at frequency `f` for sample rate
- * `fs`. Exposed so the calibration test can derive a self-consistent expected
- * LUFS from the very filter under test (~0 dB at 1 kHz by design).
+ * `fs`. The cascade gain at 997 Hz is +0.691 dB — the origin of the spec's
+ * -0.691 loudness offset. Tests check this against hard-coded spec values.
  */
 export function kWeightGainDb(f: number, fs: number): number {
-  const [s1, s2] = kWeightStages(fs);
+  const [s1, s2] = kWeightCoefficients(fs);
   return biquadMagDb(s1, f, fs) + biquadMagDb(s2, f, fs);
 }
 
@@ -168,7 +172,7 @@ class KWeightFilter {
   private readonly s1: BiquadState;
   private readonly s2: BiquadState;
   constructor(fs: number) {
-    const [c1, c2] = kWeightStages(fs);
+    const [c1, c2] = kWeightCoefficients(fs);
     this.s1 = new BiquadState(c1);
     this.s2 = new BiquadState(c2);
   }
@@ -200,13 +204,13 @@ function powerToLufs(weightedPower: number): number {
 /**
  * Streaming BS.1770-4 / EBU R128 loudness meter (stereo or mono).
  *
- * GATING APPROXIMATION ---------------------------------------------------------
- * The spec defines integrated loudness over 400 ms blocks overlapping by 75%
- * (i.e. a new block every 100 ms). This implementation uses NON-OVERLAPPING
- * 400 ms blocks for the gating histogram — a documented approximation that is
- * exact for steady-state signals (all our compliance tests are steady tones or
- * steady tone + silence) and differs from full overlap only on fast transients.
- * Momentary (400 ms) and short-term (3 s) windows are exact trailing windows.
+ * GATING -----------------------------------------------------------------------
+ * Integrated loudness uses 400 ms gating blocks with 75% overlap (a new block
+ * every 100 ms hop), per BS.1770-4. This is implemented O(n) by accumulating
+ * 100 ms hop sums and keeping a running sum of the last four hops; a gating
+ * block completes at every hop boundary once four hops have been seen. A final
+ * incomplete block is discarded (spec behavior), so at most <100 ms of tail is
+ * ignored. Momentary (400 ms) and short-term (3 s) are exact trailing windows.
  */
 export class LoudnessMeter {
   private readonly left: KWeightFilter;
@@ -222,10 +226,16 @@ export class LoudnessMeter {
   /** Prefix-sum-free short-term sum maintained over the full ring. */
   private shortTermSum = 0;
 
-  /** Non-overlapping 400 ms gating-block accumulator. */
-  private gateBlockSum = 0;
-  private gateBlockCount = 0;
-  private readonly gateBlockLen: number; // 400 ms in samples
+  /** 400 ms gating blocks with 75% overlap: 100 ms hop accumulator. */
+  private gateHopSum = 0; // sum of p over the current (partial) 100 ms hop
+  private gateHopCount = 0; // samples accumulated into the current hop
+  private readonly gateHopLen: number; // 100 ms in samples
+  private readonly gateBlockLen: number; // 400 ms in samples (= 4 hops)
+  /** Last 4 completed hop sums (ring); their total is `gateWindowSum`. */
+  private readonly gateHopRing = new Float64Array(4);
+  private gateHopHead = 0; // next write index into gateHopRing
+  private gateHopsSeen = 0; // completed hops, capped at 4
+  private gateWindowSum = 0; // running sum of the last 4 hop sums
   /** Per-block weighted mean-square power of completed gating blocks. */
   private readonly gateBlockPowers: number[] = [];
 
@@ -235,7 +245,8 @@ export class LoudnessMeter {
     this.right = new KWeightFilter(sampleRate);
     this.momentaryLen = Math.max(1, Math.round(0.4 * sampleRate));
     this.shortTermLen = Math.max(1, Math.round(3.0 * sampleRate));
-    this.gateBlockLen = this.momentaryLen; // 400 ms gating block
+    this.gateHopLen = Math.max(1, Math.round(0.1 * sampleRate)); // 100 ms hop
+    this.gateBlockLen = 4 * this.gateHopLen; // 400 ms gating block
     this.ring = new Float64Array(this.shortTermLen);
   }
 
@@ -279,13 +290,20 @@ export class LoudnessMeter {
       this.runningSum -= ring[outIdx];
     }
 
-    // Gating: fixed non-overlapping 400 ms blocks.
-    this.gateBlockSum += p;
-    this.gateBlockCount++;
-    if (this.gateBlockCount === this.gateBlockLen) {
-      this.gateBlockPowers.push(this.gateBlockSum / this.gateBlockCount);
-      this.gateBlockSum = 0;
-      this.gateBlockCount = 0;
+    // Gating: 400 ms blocks, 100 ms hop (75% overlap per BS.1770-4).
+    this.gateHopSum += p;
+    this.gateHopCount++;
+    if (this.gateHopCount === this.gateHopLen) {
+      // Slide the 4-hop window: drop the oldest hop sum, add the new one.
+      this.gateWindowSum += this.gateHopSum - this.gateHopRing[this.gateHopHead];
+      this.gateHopRing[this.gateHopHead] = this.gateHopSum;
+      this.gateHopHead = (this.gateHopHead + 1) % 4;
+      this.gateHopSum = 0;
+      this.gateHopCount = 0;
+      if (this.gateHopsSeen < 4) this.gateHopsSeen++;
+      if (this.gateHopsSeen === 4) {
+        this.gateBlockPowers.push(this.gateWindowSum / this.gateBlockLen);
+      }
     }
   }
 
@@ -350,8 +368,12 @@ export class LoudnessMeter {
     this.ringHead = 0;
     this.runningSum = 0;
     this.shortTermSum = 0;
-    this.gateBlockSum = 0;
-    this.gateBlockCount = 0;
+    this.gateHopSum = 0;
+    this.gateHopCount = 0;
+    this.gateHopRing.fill(0);
+    this.gateHopHead = 0;
+    this.gateHopsSeen = 0;
+    this.gateWindowSum = 0;
     this.gateBlockPowers.length = 0;
   }
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { ScopeHistory } from "../analysis/derived";
 import { useScopeDraw } from "./useAnimationFrame";
 import { drawFrozenBadge } from "./canvasOverlay";
+import { backingStorePx, useDevicePixelRatio } from "./useCanvasDpr";
 
 interface LoudnessHistoryProps {
   /** Rolling loudness/level time-series, newest last. */
@@ -43,12 +44,15 @@ export function LoudnessHistory({
   frozen = false,
 }: LoudnessHistoryProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dpr = useDevicePixelRatio();
 
   const draw = (): void => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    // Backing store is dpr-scaled; keep all drawing in logical coordinates.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -104,7 +108,7 @@ export function LoudnessHistory({
     if (frozen) drawFrozenBadge(ctx, PAD_L);
   };
 
-  useScopeDraw(draw, active, [frozen, history]);
+  useScopeDraw(draw, active, [frozen, history, dpr]);
   useEffect(() => {
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -116,8 +120,8 @@ export function LoudnessHistory({
       <div className="canvas-wrap">
         <canvas
           ref={canvasRef}
-          width={WIDTH}
-          height={HEIGHT}
+          width={backingStorePx(WIDTH, dpr)}
+          height={backingStorePx(HEIGHT, dpr)}
           role="img"
           aria-label="Loudness history: momentary and short-term LUFS over time"
         />

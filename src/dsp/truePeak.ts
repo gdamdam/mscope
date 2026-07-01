@@ -144,3 +144,99 @@ export function truePeakDb(samples: Float32Array, oversample = 4): number {
 
   return linToDb(peak);
 }
+
+/**
+ * Stateful streaming true-peak meter for frame-by-frame metering.
+ *
+ * The one-shot `truePeakDb` pads each buffer's edges by replication, so an
+ * inter-sample excursion straddling two consecutive frames is invisible to it
+ * (the interpolator never sees the neighboring frame's samples) and can be
+ * under-read by up to ~3 dB. This meter instead carries a short history tail
+ * across `process` calls: each frame is interpolated against the real
+ * preceding samples, and interpolation points whose right-hand filter support
+ * isn't available yet (the last HALF_TAPS positions of the frame) are
+ * deferred and evaluated on the next call — so a peak that falls exactly
+ * between two frames is reported (in the later frame) at its true value.
+ * Feeding one long buffer or the same samples split into arbitrary frames
+ * yields the same overall maximum.
+ *
+ * The very first positions after construction/reset have no real left
+ * context; like `upsample`, they clamp to the first sample (replicate-edge)
+ * to avoid synthetic-step ringing.
+ */
+export class TruePeakMeter {
+  private readonly factor: number;
+  /** Carried samples: left context (up to HALF_TAPS-1) + deferred positions. */
+  private tail = new Float32Array(0);
+  /** Index within `tail` of the first interpolation position not yet evaluated. */
+  private firstPending = 0;
+
+  constructor(oversample = 4) {
+    this.factor = Math.max(1, Math.floor(oversample));
+  }
+
+  /** Forget all history (call when the stream restarts or channels reset). */
+  reset(): void {
+    this.tail = new Float32Array(0);
+    this.firstPending = 0;
+  }
+
+  /**
+   * Meter one frame. Returns the peak (dBTP) over this frame's raw samples
+   * plus every newly fully-supported interpolated point — including the
+   * deferred boundary region between the previous frame and this one.
+   * An empty frame returns DB_FLOOR and leaves the history untouched.
+   */
+  process(frame: Float32Array): number {
+    const n = frame.length;
+    if (n === 0) return DB_FLOOR;
+
+    // Raw sample magnitudes of THIS frame need no filter support.
+    let peak = 0;
+    for (let i = 0; i < n; i++) {
+      const a = Math.abs(frame[i]);
+      if (a > peak) peak = a;
+    }
+
+    if (this.factor > 1) {
+      const { taps, coeffs } = getPolyphase(this.factor);
+      const H = HALF_TAPS;
+      const L = this.tail.length;
+      const N = L + n;
+      // ext = [carried tail | new frame]
+      const ext = new Float32Array(N);
+      ext.set(this.tail, 0);
+      ext.set(frame, L);
+
+      // Evaluate every interpolation position whose full right-hand support
+      // (H samples) is now available, resuming where the last call stopped.
+      const endPos = N - 1 - H;
+      for (let i = this.firstPending; i <= endPos; i++) {
+        const left = i - (H - 1);
+        for (let p = 0; p < this.factor; p++) {
+          let acc = 0;
+          const base = p * taps;
+          for (let t = 0; t < taps; t++) {
+            // idx >= N cannot happen (i <= N-1-H); idx < 0 only at stream
+            // start, where we replicate the first sample (see class doc).
+            let idx = left + t;
+            if (idx < 0) idx = 0;
+            acc += ext[idx] * coeffs[base + t];
+          }
+          const a = Math.abs(acc);
+          if (a > peak) peak = a;
+        }
+      }
+
+      // Carry the still-pending trailing positions plus their H-1 samples of
+      // left context, so the next frame evaluates the boundary region against
+      // real preceding samples.
+      const nextPending = Math.max(this.firstPending, endPos + 1);
+      const keepFrom = Math.max(0, nextPending - (H - 1));
+      this.tail = ext.slice(keepFrom);
+      this.firstPending = nextPending - keepFrom;
+    }
+
+    return linToDb(peak);
+  }
+}

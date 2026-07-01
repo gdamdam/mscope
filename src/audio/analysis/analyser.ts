@@ -129,6 +129,15 @@ export class ScopeAnalyser {
   }
 
   /**
+   * The node upstream sources connect into. Exposed so the owner can sever a
+   * source's edge into THIS analyser specifically (dispose() cannot remove
+   * incoming edges — only the source side can disconnect them).
+   */
+  get input(): AudioNode {
+    return this.splitter;
+  }
+
+  /**
    * Route both analysers' outputs to a sink (a muted node -> destination). An
    * AnalyserNode whose output is unconnected is never pulled by the render graph,
    * so without this the waveform/spectrum stay empty even with live input.

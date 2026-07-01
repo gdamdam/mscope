@@ -38,6 +38,56 @@ describe("Meters", () => {
     expect(clip?.className).toContain("clip--held");
     view.unmount();
   });
+
+  it("clears the held clip badge when resetToken changes (session reset)", () => {
+    const view = render(
+      createElement(Meters, {
+        channels: [ch({ clipCount: 5 })],
+        resetToken: 0,
+      }),
+    );
+    // Clean frame after the clip: badge stays held.
+    view.rerender(
+      createElement(Meters, {
+        channels: [ch({ clippedNow: false, clipCount: 0 })],
+        resetToken: 0,
+      }),
+    );
+    expect(view.container.querySelector(".clip")?.className).toContain(
+      "clip--held",
+    );
+    // Session reset (token bump) drops the sticky flag.
+    view.rerender(
+      createElement(Meters, {
+        channels: [ch({ clippedNow: false, clipCount: 0 })],
+        resetToken: 1,
+      }),
+    );
+    const clip = view.container.querySelector(".clip");
+    expect(clip?.className).not.toContain("clip--held");
+    expect(clip?.textContent).toBe("");
+    view.unmount();
+  });
+
+  it("does not carry a held flag onto a channel that reappears clean", () => {
+    // Stereo with a clipped R, shrink to mono, grow back to a clean stereo:
+    // the new channel 1 must not inherit the old held flag.
+    const view = render(
+      createElement(Meters, {
+        channels: [ch(), ch({ clippedNow: true })],
+      }),
+    );
+    view.rerender(createElement(Meters, { channels: [ch()] }));
+    view.rerender(
+      createElement(Meters, {
+        channels: [ch(), ch({ clippedNow: false, clipCount: 0 })],
+      }),
+    );
+    const clips = view.container.querySelectorAll(".clip");
+    expect(clips.length).toBe(2);
+    expect(clips[1].className).not.toContain("clip--held");
+    view.unmount();
+  });
 });
 
 describe("Diagnostics", () => {

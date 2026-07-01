@@ -249,17 +249,26 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
       try {
         // Acquire the underlying MediaStream (mic permission / tab picker).
         await next.start();
+        // stop() or a newer attach may supersede us during any await below;
+        // those paths already stop/dispose `next` and detach the engine, so a
+        // stale continuation must not resume the graph or set any state.
+        if (sourceRef.current !== next) return;
 
         // Acquisition can fail or be cancelled; only build the graph if live.
         if (next.state === "live") {
           await engine.setSource(next);
+          if (sourceRef.current !== next) return;
           await engine.resume();
+          if (sourceRef.current !== next) return;
           lastFrameTsRef.current = null; // restart delta accounting
         }
       } catch {
         // Input classes surface their own permission/cancel errors via state;
         // this guards UNEXPECTED engine/worklet failures so captureTab/captureMic
         // never reject into an unhandled promise rejection at the call site.
+        // A superseded attach's rejection is stale: it must not clobber the
+        // replacement source's displayed state with "error".
+        if (sourceRef.current !== next) return;
         setInputState("error");
       }
       setEngineState(engine.state);

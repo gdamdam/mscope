@@ -152,18 +152,91 @@ describe("MetersCore", () => {
     expect(frame.metrics.timeMs).toBeCloseTo(1000, 3);
   });
 
-  it("clears the per-frame window between frames (true-peak not carried over)", () => {
+  it("clears the per-frame window between frames (sample peak not carried over)", () => {
     const core = new MetersCore(SR);
     // Frame 1: loud square -> high true peak.
     pushSignal(core, 1, QUANTUM, (_c, n) => (n % 2 === 0 ? 1 : -1));
     const f1 = core.buildFrame();
     expect(f1.metrics.channels[0].truePeakDb).toBeGreaterThan(-1);
 
-    // Frame 2: silence -> true peak floors (window was cleared).
+    // Frame 2: silence. The frame window itself was cleared (sample peak
+    // floors), but the true-peak meter legitimately carries the FIR history
+    // tail (~half the kernel) across the boundary, so the inter-sample region
+    // between the hot frame 1 and frame 2 is still reported here.
     pushSignal(core, 1, QUANTUM, () => 0);
     const f2 = core.buildFrame();
-    expect(f2.metrics.channels[0].truePeakDb).toBe(DB_FLOOR);
     expect(f2.metrics.channels[0].peakDb).toBe(DB_FLOOR);
+
+    // Frame 3: silence again -> no history left, true peak floors.
+    pushSignal(core, 1, QUANTUM, () => 0);
+    const f3 = core.buildFrame();
+    expect(f3.metrics.channels[0].truePeakDb).toBe(DB_FLOOR);
+    expect(f3.metrics.channels[0].peakDb).toBe(DB_FLOOR);
+  });
+
+  it("catches an inter-sample true peak straddling two frame windows", () => {
+    // Hann-windowed fs/4 burst whose only true crest (amp 0.9, ~-0.92 dBTP)
+    // sits exactly between the last sample of frame 1 and the first sample of
+    // frame 2. Both stored neighbors are only ~0.63 => a stateless per-frame
+    // true-peak under-reads it.
+    const amp = 0.9;
+    const winLen = 32;
+    const c = QUANTUM - 0.5;
+    const burst = (n: number): number => {
+      const d = n - c;
+      if (Math.abs(d) > winLen / 2) return 0;
+      const env = 0.5 * (1 + Math.cos((2 * Math.PI * d) / winLen));
+      return amp * Math.cos((Math.PI / 2) * d) * env;
+    };
+    const analytic = 20 * Math.log10(amp);
+
+    const core = new MetersCore(SR);
+    pushSignal(core, 1, QUANTUM, (_ch, n) => burst(n));
+    const f1 = core.buildFrame();
+    pushSignal(core, 1, QUANTUM, (_ch, n) => burst(QUANTUM + n));
+    const f2 = core.buildFrame();
+
+    const measured = Math.max(
+      f1.metrics.channels[0].truePeakDb,
+      f2.metrics.channels[0].truePeakDb,
+    );
+    expect(Math.abs(measured - analytic)).toBeLessThan(0.1);
+  });
+
+  it("reset() clears the true-peak history tail", () => {
+    const core = new MetersCore(SR);
+    // Hot fs/4 tone at pi/4 phase: ~0 dBTP, samples only +-0.7071.
+    pushSignal(core, 1, QUANTUM, (_ch, n) =>
+      Math.sin(2 * Math.PI * 0.25 * n + Math.PI / 4),
+    );
+    core.buildFrame();
+
+    core.reset();
+    // Quiet constant after reset: must read its own level, not the hot tail.
+    pushSignal(core, 1, QUANTUM, () => 0.05);
+    const frame = core.buildFrame();
+    expect(frame.metrics.channels[0].truePeakDb).toBeCloseTo(-26.02, 1);
+  });
+
+  it("channel-count changes preserve the surviving channel's cumulative counters", () => {
+    const core = new MetersCore(SR);
+    // Full-scale square: every sample clips, every transition is a glitch step.
+    const sq = (n: number): number => (n % 2 === 0 ? 1 : -1);
+
+    pushSignal(core, 2, QUANTUM, (_ch, n) => sq(n));
+    let frame = core.buildFrame();
+    expect(frame.metrics.channels[0].clipCount).toBe(QUANTUM);
+    // First quantum: no predecessor for sample 0, so QUANTUM - 1 steps.
+    expect(frame.metrics.glitchCounts![0]).toBe(QUANTUM - 1);
+
+    // Drop to mono mid-stream, then back to stereo: channel 0 persists
+    // throughout, so its cumulative counters must keep accumulating.
+    pushSignal(core, 1, QUANTUM, (_ch, n) => sq(n));
+    pushSignal(core, 2, QUANTUM, (_ch, n) => sq(n));
+    frame = core.buildFrame();
+    expect(frame.metrics.channelCount).toBe(2);
+    expect(frame.metrics.channels[0].clipCount).toBe(3 * QUANTUM);
+    expect(frame.metrics.glitchCounts![0]).toBe(3 * QUANTUM - 1);
   });
 
   it("respects a custom AnalysisConfig (low-signal classification)", () => {

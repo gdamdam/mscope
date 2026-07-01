@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi, type Mock } from "vitest";
 import { createElement } from "react";
 import { render } from "./testRender";
 import { Spectrum } from "./Spectrum";
@@ -54,6 +54,29 @@ describe("Spectrum", () => {
     const title = view.container.querySelector(".panel__title");
     expect(title?.textContent).toContain("+4.5 dB/oct");
     view.unmount();
+  });
+
+  it("sizes the backing store by devicePixelRatio and draws in logical coords", () => {
+    restore = stubCanvas();
+    vi.stubGlobal("devicePixelRatio", 2);
+    try {
+      const view = render(
+        createElement(Spectrum, {
+          getSpectrum: () => new Float32Array(1024).fill(-60),
+          sampleRate: 48000,
+          active: false,
+        }),
+      );
+      const canvas = view.container.querySelector("canvas") as HTMLCanvasElement;
+      // 600×176 logical → 1200×352 device pixels at dpr=2.
+      expect(canvas.width).toBe(1200);
+      expect(canvas.height).toBe(352);
+      const ctx = canvas.getContext("2d") as unknown as { setTransform: Mock };
+      expect(ctx.setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 0, 0);
+      view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

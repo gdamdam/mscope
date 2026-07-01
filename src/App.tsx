@@ -1,6 +1,7 @@
 import "./index.css";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createScopeEngine } from "./audio/engine";
+import type { AudioInputState } from "./audio/input/AudioInputSource";
 import { useScope } from "./ui/useScope";
 import { SourceSelector } from "./ui/SourceSelector";
 import { InputStatus } from "./ui/InputStatus";
@@ -53,6 +54,29 @@ function SectionLabel({ children }: { children: string }): JSX.Element {
   return <p className="section-label">{children}</p>;
 }
 
+/**
+ * States in which a capture is still held and must be releasable via Stop.
+ * "muted" counts: a live mic/tab capture whose track was muted upstream still
+ * holds the tracks (and the browser's capture indicator) until stopped.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- exported for tests
+export function canStopCapture(state: AudioInputState): boolean {
+  return state === "live" || state === "requesting" || state === "muted";
+}
+
+/**
+ * Channel the single-channel views (Spectrum / RTA / Histogram) should read.
+ * "both" reads channel 0; a soloed channel that no longer exists (e.g. Solo-R
+ * held over from a stereo source after switching to mono) falls back to 0.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- exported for tests
+export function effectiveChannel(
+  solo: 0 | 1 | "both",
+  channelCount: number,
+): 0 | 1 {
+  return solo === 1 && channelCount > 1 ? 1 : 0;
+}
+
 export default function App(): JSX.Element {
   // Inject the real engine factory; the hook never statically imports engine.ts.
   const scope = useScope(createScopeEngine);
@@ -103,7 +127,22 @@ export default function App(): JSX.Element {
   const channelCount = metrics?.channelCount ?? 1;
   const sampleRate = metrics?.sampleRate ?? 0;
   // Spectrum / RTA / Histogram follow the soloed channel; "both" reads channel 0.
-  const channel: 0 | 1 = solo === 1 ? 1 : 0;
+  const channel = effectiveChannel(solo, channelCount);
+
+  // A soloed L/R channel is meaningless once the source turns mono; snap back
+  // to "both" so SoloControl doesn't show a disabled-but-pressed selection.
+  useEffect(() => {
+    if (channelCount < 2 && solo !== "both") setSolo("both");
+  }, [channelCount, solo]);
+
+  // Epoch bumped on each session reset so Meters can drop its sticky clip
+  // flags — the latest frame (and its cumulative clipCount) is unchanged at
+  // reset time, so the channels prop alone cannot carry the signal.
+  const [resetToken, setResetToken] = useState(0);
+  const handleResetSession = useCallback(() => {
+    resetSession();
+    setResetToken((t) => t + 1);
+  }, [resetSession]);
 
   // Session true-peak hold across channels (−Infinity until measured).
   const maxTruePeakHoldDb = Math.max(
@@ -151,7 +190,7 @@ export default function App(): JSX.Element {
           kind={source?.kind ?? null}
           state={inputState}
           error={source?.error ?? null}
-          canStop={live || busy}
+          canStop={canStopCapture(inputState)}
           onStop={stop}
         />
       </section>
@@ -193,9 +232,9 @@ export default function App(): JSX.Element {
                 LOUDNESS_TARGETS.find((t) => t.id === id) ?? DEFAULT_TARGET,
               )
             }
-            onResetHolds={resetSession}
+            onResetHolds={handleResetSession}
           />
-          <Meters channels={metrics?.channels ?? []} />
+          <Meters channels={metrics?.channels ?? []} resetToken={resetToken} />
         </div>
       </section>
 
@@ -289,7 +328,7 @@ export default function App(): JSX.Element {
           <ReportPanel
             summary={summary}
             snapshotSummary={snapshotSummary}
-            onReset={resetSession}
+            onReset={handleResetSession}
             exportJson={exportJson}
             exportMarkdown={exportMarkdown}
           />

@@ -54,7 +54,15 @@ export class FileInput extends BaseInput {
     if (!this.bytes) {
       throw new Error("connect() requires bytes — call start() first.");
     }
+    // Capture the generation across the async decode: a stop()/dispose() while
+    // decodeAudioData is in flight bumps it, and starting a looping source
+    // afterwards could never be stopped (stop() no-ops once "ended") — the
+    // started node would play and be pinned against GC forever.
+    const gen = this.generation;
     const buffer = await ctx.decodeAudioData(this.bytes.slice(0));
+    if (gen !== this.generation) {
+      throw new Error("connect() superseded — input stopped during decode.");
+    }
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.loop = true;

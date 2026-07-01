@@ -50,6 +50,24 @@ describe("InputStatus", () => {
     view.unmount();
   });
 
+  it("keeps Stop enabled while a live capture is muted", () => {
+    // A muted mic/tab capture still holds tracks; the user must be able to stop.
+    const view = render(
+      createElement(InputStatus, {
+        kind: "microphone",
+        state: "muted" as AudioInputState,
+        error: null,
+        canStop: true,
+        onStop: () => {},
+      }),
+    );
+    const stop = view.container.querySelector(
+      'button[aria-label="Stop capture"]',
+    ) as HTMLButtonElement;
+    expect(stop.disabled).toBe(false);
+    view.unmount();
+  });
+
   it("disables Stop when there is nothing to stop", () => {
     const view = render(
       createElement(InputStatus, {

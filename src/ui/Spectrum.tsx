@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { binToFrequency, frequencyToBin } from "../audio/analysis/analyser";
 import { useScopeDraw } from "./useAnimationFrame";
 import { drawFrozenBadge } from "./canvasOverlay";
+import { backingStorePx, useDevicePixelRatio } from "./useCanvasDpr";
 import { noteName } from "./notes";
 
 interface SpectrumProps {
@@ -48,6 +49,7 @@ export function Spectrum({
   peakHold = false,
 }: SpectrumProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dpr = useDevicePixelRatio();
   const sr = sampleRate > 0 ? sampleRate : 48000;
   const nyquist = sr / 2;
 
@@ -68,6 +70,8 @@ export function Spectrum({
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    // Backing store is dpr-scaled; keep all drawing in logical coordinates.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -179,6 +183,7 @@ export function Spectrum({
     channel,
     tiltDbPerOct,
     peakHold,
+    dpr,
   ]);
   useEffect(() => {
     draw();
@@ -212,8 +217,8 @@ export function Spectrum({
       <div className="canvas-wrap">
         <canvas
           ref={canvasRef}
-          width={WIDTH}
-          height={HEIGHT}
+          width={backingStorePx(WIDTH, dpr)}
+          height={backingStorePx(HEIGHT, dpr)}
           role="img"
           aria-label={`Frequency-domain magnitude spectrum, channel ${channel}`}
           onMouseMove={onMouseMove}

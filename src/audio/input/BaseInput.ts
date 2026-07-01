@@ -110,6 +110,11 @@ export abstract class BaseInput implements AudioInputSource {
    * for unexpected disconnects: teardown detaches it before any intentional stop.
    */
   protected wireStream(stream: MediaStream, endedTrack: MediaStreamTrack): void {
+    // A rewire (second start()) must not leak the previous stream: remove its
+    // track listeners, stop its tracks and drop the cached source node (which
+    // still wraps the OLD stream). Done without bumping generation — this call
+    // belongs to the current, valid acquisition.
+    this.releaseStream();
     this._stream = stream;
     this.endedTrack = endedTrack;
     const handler = (): void => this.handleTrackEnded();
@@ -157,6 +162,15 @@ export abstract class BaseInput implements AudioInputSource {
    */
   protected teardown(): void {
     this.generation += 1;
+    this.releaseStream();
+  }
+
+  /**
+   * Release the wired stream (if any): detach the track listeners, disconnect
+   * the cached source node, stop every track and null the refs. Shared by
+   * teardown() and wireStream() (rewire) — only teardown bumps generation.
+   */
+  private releaseStream(): void {
     if (this.endedTrack) {
       if (this.endedHandler) {
         this.endedTrack.removeEventListener("ended", this.endedHandler);

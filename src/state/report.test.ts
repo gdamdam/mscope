@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { toJson, toMarkdown, DISCLAIMER } from './report';
-import { MeasurementSession, type SessionSummary } from './session';
+import { DB_FLOOR, MeasurementSession, type SessionSummary } from './session';
 import type { MetricsSnapshot, ChannelLevels } from '../audio/analysis/metrics';
 
 function ch(p: Partial<ChannelLevels>): ChannelLevels {
@@ -58,6 +58,18 @@ describe('report toMarkdown', () => {
     expect(md).toMatch(/Levels/i);
     expect(md).toMatch(/Loudness/i);
     expect(md).toMatch(/Diagnostics/i);
+  });
+
+  it('renders the DB_FLOOR "not measured" sentinel as n/a, not a value', () => {
+    // A silent channel never observes a finite peak; both maxes sit at DB_FLOOR.
+    const s = new MeasurementSession();
+    s.ingest(snap({ channels: [ch({ peakDb: NaN, truePeakDb: NaN })] }), 100);
+    const md = toMarkdown(s.summary());
+    const row = md.split('\n').find((l) => l.startsWith('| 0 |'));
+    expect(row).toBeDefined();
+    expect(row).not.toContain(`${DB_FLOOR}`);
+    // DC offset legitimately starts (and can stay) at 0 — printed as-is.
+    expect(row).toBe('| 0 | n/a | n/a | 0 |');
   });
 
   it('contains key metric values', () => {

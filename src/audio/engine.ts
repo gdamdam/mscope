@@ -49,6 +49,11 @@ class ScopeEngineImpl implements ScopeEngine {
   private readonly frameListeners = new Set<(frame: AnalysisFrame) => void>();
   private _state: EngineState = "idle";
 
+  /** Bumped by every setSource/detach/dispose. A setSource continuation
+   *  captures the value at entry; a mismatch after any await means it was
+   *  superseded and must abort instead of touching the (new) graph. */
+  private sourceEpoch = 0;
+
   constructor(opts: ScopeEngineOptions = {}) {
     this.opts = opts;
   }
@@ -59,19 +64,31 @@ class ScopeEngineImpl implements ScopeEngine {
 
   async setSource(source: AudioInputSource): Promise<void> {
     if (this._state === "closed") return;
+    const epoch = ++this.sourceEpoch;
 
     const ctx = this.manager.getContext();
     await this.manager.loadMetersWorklet();
+    if (this.isStale(epoch)) return;
 
     // Lazily build the branch nodes once; subsequent calls reuse them.
     this.ensureBranches(ctx);
 
-    // Tear down the previous source's branches first (disconnect prior fan-out).
-    this.teardownSource();
-
-    // Build the new source node and fan it out to the three branches.
-    // connect() may be async (e.g. audio-file decode).
+    // Build the new source node BEFORE tearing down the old fan-out: a slow
+    // async connect (audio-file decode) must neither leave a silent gap nor
+    // let an overlapping setSource corrupt sourceNode/currentSource tracking.
     const node = await source.connect(ctx);
+    if (this.isStale(epoch)) {
+      // Superseded (newer setSource / detach / dispose) while connecting.
+      // The just-built node must not join the graph or linger as a live
+      // orphan (e.g. a started looping buffer source) — stop it outright.
+      node.disconnect();
+      source.stop();
+      return;
+    }
+
+    // Tear down the previous source's branches (disconnect prior fan-out)
+    // now that the replacement is ready, then fan the new node out.
+    this.teardownSource();
     this.currentSource = source;
     this.sourceNode = node;
 
@@ -82,7 +99,13 @@ class ScopeEngineImpl implements ScopeEngine {
     this.monitor!.node.connect(ctx.destination);
 
     await this.manager.resume();
+    if (this.isStale(epoch)) return; // detached/superseded during resume
     this._state = "running";
+  }
+
+  /** True when a setSource continuation holding `epoch` has been superseded. */
+  private isStale(epoch: number): boolean {
+    return epoch !== this.sourceEpoch || this._state === "closed";
   }
 
   /** Create the analyser, meters worklet node and monitor exactly once. */
@@ -138,6 +161,10 @@ class ScopeEngineImpl implements ScopeEngine {
     // (to the source for input, and to the silent sink so it's still pulled).
     if (this.analyser) {
       const ctx = this.manager.getContext();
+      // Remove the live source's edge INTO the old analyser before disposing
+      // it — dispose() can only sever the analyser's outgoing edges, so
+      // without this every config change leaks an orphan splitter chain.
+      if (this.sourceNode) this.sourceNode.disconnect(this.analyser.input);
       this.analyser.dispose();
       this.analyser = new ScopeAnalyser(ctx, {
         fftSize: this.opts.fftSize,
@@ -179,6 +206,7 @@ class ScopeEngineImpl implements ScopeEngine {
 
   detach(): void {
     if (this._state === "closed") return;
+    this.sourceEpoch += 1; // abort any in-flight setSource continuation
     // Disconnect the source from every branch and forget it, so a later
     // resume() can't falsely report "running" against a dead graph, and the
     // stopped source node isn't retained.
@@ -193,6 +221,7 @@ class ScopeEngineImpl implements ScopeEngine {
 
   dispose(): void {
     if (this._state === "closed") return;
+    this.sourceEpoch += 1; // abort any in-flight setSource continuation
     this.teardownSource();
     if (this.metersNode) {
       this.metersNode.port.onmessage = null;

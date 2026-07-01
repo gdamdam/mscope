@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChannelLevels } from "../audio/analysis/metrics";
 import { fmtDb } from "./format";
 
 interface MetersProps {
   channels: ChannelLevels[];
+  /**
+   * Session-reset epoch: increment to clear the sticky per-channel clip flags.
+   * Needed because `channels` alone can't signal a reset — the latest frame
+   * (and its cumulative clipCount) is unchanged at the moment the user resets.
+   */
+  resetToken?: number;
 }
 
 /**
@@ -18,20 +24,22 @@ interface MetersProps {
  * (clippedNow) and whether it has *ever* happened (peak-hold), not about summing
  * counts — so we hold a sticky "has clipped" flag derived from clippedNow.
  */
-export function Meters({ channels }: MetersProps): JSX.Element {
-  // Peak-hold: sticky "clipped at some point" per channel, reset when channels
-  // identity is cleared (e.g. session reset surfaces empty channels first).
+export function Meters({ channels, resetToken = 0 }: MetersProps): JSX.Element {
+  // Peak-hold: sticky "clipped at some point" per channel. Cleared only by a
+  // resetToken bump (session reset); declared BEFORE the accumulate effect so
+  // that on mount the clear (a no-op on the empty initial state) runs first.
   const [held, setHeld] = useState<boolean[]>([]);
-  const prevLenRef = useRef(0);
 
   useEffect(() => {
-    setHeld((prev) => {
-      const next = channels.map(
-        (c, i) => Boolean(prev[i]) || c.clippedNow || c.clipCount > 0,
-      );
-      return next;
-    });
-    prevLenRef.current = channels.length;
+    setHeld((prev) => prev.map(() => false));
+  }, [resetToken]);
+
+  useEffect(() => {
+    // OR-accumulate per channel; mapping over `channels` also handles count
+    // changes (a removed channel's flag is dropped, a new one starts fresh).
+    setHeld((prev) =>
+      channels.map((c, i) => Boolean(prev[i]) || c.clippedNow || c.clipCount > 0),
+    );
   }, [channels]);
 
   return (

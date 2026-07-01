@@ -62,6 +62,9 @@ export class GeneratorInput extends BaseInput {
   connect(ctx: AudioContext): AudioNode {
     if (this.outNode) return this.outNode;
 
+    // Building a fresh source node: clear the stopped flag so the NEXT
+    // teardown stops it (the guard is per-node, not per-instance).
+    this.sourceStopped = false;
     if (this.type === "sine") {
       this.outNode = this.buildSine(ctx);
     } else {

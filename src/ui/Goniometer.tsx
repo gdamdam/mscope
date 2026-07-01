@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useScopeDraw } from "./useAnimationFrame";
 import { drawFrozenBadge } from "./canvasOverlay";
+import { backingStorePx, useDevicePixelRatio } from "./useCanvasDpr";
 
 interface GoniometerProps {
   /** Pull the latest time-domain samples for a channel from the engine. */
@@ -33,6 +34,7 @@ export function Goniometer({
   frozen = false,
 }: GoniometerProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dpr = useDevicePixelRatio();
   const isStereo = channelCount >= 2;
 
   const draw = (): void => {
@@ -40,6 +42,8 @@ export function Goniometer({
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    // Backing store is dpr-scaled; keep all drawing in logical coordinates.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const cx = SIZE / 2;
     const cy = SIZE / 2;
@@ -83,15 +87,30 @@ export function Goniometer({
     const right = isStereo ? getWaveform(1) : new Float32Array(0);
 
     if (!isStereo || !right || right.length === 0) {
-      // Mono: signal is purely in-phase, so it collapses onto the vertical axis.
-      ctx.strokeStyle = TRACE;
-      ctx.globalAlpha = frozen ? 0.5 : 0.9;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - radius);
-      ctx.lineTo(cx, cy + radius);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+      // Mono: signal is purely in-phase, so it collapses onto the vertical
+      // axis. Scale the trace by the actual sample extrema so silence draws
+      // nothing — a dual-mono signal (l = r = s) on the stereo path plots
+      // y = s·√2·radius, so the mono line spans exactly the same extent.
+      let hi = 0;
+      let lo = 0;
+      if (left) {
+        for (let i = 0; i < left.length; i++) {
+          const v = Math.max(-1, Math.min(1, left[i]));
+          if (v > hi) hi = v;
+          if (v < lo) lo = v;
+        }
+      }
+      if (hi > lo) {
+        const k = Math.SQRT2 * radius;
+        ctx.strokeStyle = TRACE;
+        ctx.globalAlpha = frozen ? 0.5 : 0.9;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - hi * k);
+        ctx.lineTo(cx, cy - lo * k);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
       ctx.fillStyle = LABEL;
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
@@ -121,7 +140,7 @@ export function Goniometer({
   };
 
   // Redraw on the rAF loop while active; static single draw under reduced motion.
-  useScopeDraw(draw, active, [isStereo, frozen]);
+  useScopeDraw(draw, active, [isStereo, frozen, dpr]);
 
   // Also draw once on mount / when the channel mode changes.
   useEffect(() => {
@@ -137,8 +156,8 @@ export function Goniometer({
       <div className="canvas-wrap">
         <canvas
           ref={canvasRef}
-          width={SIZE}
-          height={SIZE}
+          width={backingStorePx(SIZE, dpr)}
+          height={backingStorePx(SIZE, dpr)}
           role="img"
           aria-label={`Goniometer vectorscope, ${
             isStereo ? "stereo" : "mono"

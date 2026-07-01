@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { downsampleWaveform } from "../audio/analysis/analyser";
 import { useScopeDraw } from "./useAnimationFrame";
 import { drawFrozenBadge } from "./canvasOverlay";
+import { backingStorePx, useDevicePixelRatio } from "./useCanvasDpr";
 
 interface WaveformProps {
   /** Pull the latest time-domain samples for a channel from the engine. */
@@ -51,6 +52,7 @@ export function Waveform({
   solo = "both",
 }: WaveformProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dpr = useDevicePixelRatio();
   const channels = Math.max(1, Math.min(2, channelCount || 1));
   const height = ROW_H * channels;
   const plotW = WIDTH - PAD_L;
@@ -63,6 +65,8 @@ export function Waveform({
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    // Backing store is dpr-scaled; keep all drawing in logical coordinates.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, WIDTH, height);
@@ -157,6 +161,7 @@ export function Waveform({
     bright,
     zoomF,
     solo,
+    dpr,
   ]);
 
   // Also draw once on mount / when size changes so the cleared view is correct.
@@ -173,8 +178,8 @@ export function Waveform({
       <div className="canvas-wrap">
         <canvas
           ref={canvasRef}
-          width={WIDTH}
-          height={height}
+          width={backingStorePx(WIDTH, dpr)}
+          height={backingStorePx(height, dpr)}
           role="img"
           aria-label={`Time-domain waveform, ${channels} channel${
             channels === 2 ? "s" : ""

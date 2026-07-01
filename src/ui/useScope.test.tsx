@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createElement, useEffect } from "react";
 import { useScope, type UseScope } from "./useScope";
 import { render, flush } from "./testRender";
@@ -195,6 +195,75 @@ describe("useScope", () => {
       api.clearSnapshot();
     });
     expect(api.snapshotSummary).toBeNull();
+  });
+
+  it("stop() during a pending attach leaves engine/input idle and never resumes", async () => {
+    mount();
+    // Make the engine's setSource hang until we release it (a slow decode).
+    let releaseSetSource!: () => void;
+    engine.setSource.mockImplementationOnce(
+      () => new Promise<void>((res) => (releaseSetSource = res)),
+    );
+    const resumeSpy = vi.spyOn(engine, "resume");
+    const blob = {
+      arrayBuffer: async () => new ArrayBuffer(8),
+    } as unknown as Blob;
+
+    let attachP: Promise<void> | undefined;
+    await flush(async () => {
+      attachP = api.captureFile(blob);
+      // Let start() resolve so attach reaches the pending setSource await.
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(engine.setSource).toHaveBeenCalledTimes(1);
+
+    await flush(async () => {
+      api.stop(); // user hits Stop while the file is still "decoding"
+    });
+    await flush(async () => {
+      releaseSetSource();
+      await attachP!;
+    });
+
+    // The superseded attach must not resume a detached graph or set state.
+    expect(resumeSpy).not.toHaveBeenCalled();
+    expect(api.engineState).toBe("idle");
+    expect(api.inputState).toBe("idle");
+    expect(api.source).toBeNull();
+  });
+
+  it("a superseded attach's failure does not clobber the new source's state", async () => {
+    mount();
+    // First attach: engine.setSource hangs, then rejects AFTER a second attach.
+    let failSetSource!: (e: unknown) => void;
+    engine.setSource.mockImplementationOnce(
+      () => new Promise<void>((_res, rej) => (failSetSource = rej)),
+    );
+    const blob = {
+      arrayBuffer: async () => new ArrayBuffer(8),
+    } as unknown as Blob;
+
+    let firstP: Promise<void> | undefined;
+    await flush(async () => {
+      firstP = api.captureFile(blob);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // Supersede with a generator source (default setSource impl succeeds).
+    await flush(async () => {
+      await api.captureTone({ type: "sine" });
+    });
+    expect(api.source?.kind).toBe("generator");
+    expect(api.inputState).toBe("live");
+
+    await flush(async () => {
+      failSetSource(new Error("decode failed"));
+      await firstP!;
+    });
+
+    // The stale rejection must not paint the NEW source as errored.
+    expect(api.inputState).toBe("live");
+    expect(api.source?.kind).toBe("generator");
   });
 
   it("resetSession() clears history rings and derived metrics but keeps the snapshot", async () => {

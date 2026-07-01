@@ -26,9 +26,13 @@ function ms(v: number): string {
 }
 
 function channelRow(c: ChannelSummary, i: number): string {
+  // DB_FLOOR is the "never measured" sentinel (see session.ts) — render it as
+  // n/a rather than a real level. DC offset starts at 0, and 0 is a legitimate
+  // measured value (no DC), so it has no unmeasured state and is printed raw.
+  const peak = c.maxPeakDb <= DB_FLOOR ? 'n/a' : `${c.maxPeakDb} dBFS`;
   const tp = c.maxTruePeakDb <= DB_FLOOR ? 'n/a' : `${c.maxTruePeakDb} dBTP`;
   return (
-    `| ${i} | ${c.maxPeakDb} dBFS | ${tp} | ${c.maxAbsDcOffset} |`
+    `| ${i} | ${peak} | ${tp} | ${c.maxAbsDcOffset} |`
   );
 }
 

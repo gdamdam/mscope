@@ -250,6 +250,25 @@ describe("GeneratorInput", () => {
     expect(gen.state).toBe("ended");
   });
 
+  it("a reconnected instance stops its NEW source on the next teardown", async () => {
+    const gen = new GeneratorInput({ type: "sine" });
+    await gen.start();
+    const c1 = makeContext();
+    gen.connect(c1.ctx);
+    gen.stop();
+    expect(c1.oscillators[0].stop).toHaveBeenCalledTimes(1);
+
+    // Reconnect the same instance: the stopped-flag must reset with the new
+    // node, or the second teardown silently leaves the oscillator running.
+    await gen.start();
+    const c2 = makeContext();
+    gen.connect(c2.ctx);
+    gen.stop();
+    expect(c2.oscillators[0].stop).toHaveBeenCalledTimes(1);
+    expect(c2.oscillators[0].disconnect).toHaveBeenCalled();
+    expect(gen.state).toBe("ended");
+  });
+
   it("dispose() is idempotent and clears listeners", async () => {
     const gen = new GeneratorInput({ type: "sine" });
     let calls = 0;

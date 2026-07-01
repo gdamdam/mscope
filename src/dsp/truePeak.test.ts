@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { truePeakDb, upsample, getPolyphase } from "./truePeak";
+import { truePeakDb, upsample, getPolyphase, TruePeakMeter } from "./truePeak";
 import { DB_FLOOR, linToDb } from "./util";
 
 /** Build `n` samples of a sine: amp*sin(2*pi*freq/fs * i + phase). */
@@ -107,6 +107,107 @@ describe("polyphase coefficient cache", () => {
       for (let t = 0; t < taps; t++) sum += coeffs[p * taps + t];
       expect(sum).toBeCloseTo(1, 6);
     }
+  });
+});
+
+/**
+ * A Hann-windowed fs/4 burst whose single true crest sits exactly half a sample
+ * off the grid, at t = boundary - 0.5 (i.e. between samples boundary-1 and
+ * boundary). s(t) = amp * cos(pi/2 * (t - c)) * hann(t - c), c = boundary - 0.5.
+ * Both factors are <= 1 with equality only at t = c, so the analytic continuous
+ * peak is exactly `amp` — and it falls between two stored samples (each only
+ * ~0.70*amp). Neighboring carrier crests (4 samples away) are attenuated by the
+ * envelope, so a meter that can't see across the boundary under-reads.
+ */
+function boundaryBurst(
+  total: number,
+  boundary: number,
+  amp: number,
+  winLen: number,
+): Float32Array {
+  const s = new Float32Array(total);
+  const c = boundary - 0.5;
+  for (let i = 0; i < total; i++) {
+    const d = i - c;
+    if (Math.abs(d) <= winLen / 2) {
+      const env = 0.5 * (1 + Math.cos((2 * Math.PI * d) / winLen));
+      s[i] = amp * Math.cos((Math.PI / 2) * d) * env;
+    }
+  }
+  return s;
+}
+
+describe("TruePeakMeter (stateful, frame-boundary aware)", () => {
+  it("catches an inter-sample peak straddling a frame boundary", () => {
+    const amp = 0.9;
+    const boundary = 128;
+    // winLen 16: narrow enough that the in-frame carrier crests are strongly
+    // envelope-attenuated (with wider windows the replicate-edge ringing of the
+    // stateless path over-reads instead — also wrong, but not an under-read).
+    const s = boundaryBurst(256, boundary, amp, 16);
+    const f1 = s.subarray(0, boundary);
+    const f2 = s.subarray(boundary);
+    const analytic = linToDb(amp); // ~ -0.915 dBTP
+
+    // The old stateless per-frame path never sees the crest: neither frame
+    // contains it, and the nearest in-frame carrier crest is envelope-attenuated.
+    const stateless = Math.max(truePeakDb(f1), truePeakDb(f2));
+    expect(stateless).toBeLessThan(analytic - 0.5);
+
+    // The stateful meter carries the FIR history across the boundary and
+    // recovers the true excursion.
+    const meter = new TruePeakMeter(4);
+    const measured = Math.max(meter.process(f1), meter.process(f2));
+    expect(Math.abs(measured - analytic)).toBeLessThan(0.1);
+  });
+
+  it("is framing-invariant: one long buffer == arbitrary frame splits", () => {
+    const rng = mulberry32(4242);
+    const n = 1000;
+    const s = new Float32Array(n);
+    for (let i = 0; i < n; i++) s[i] = rng() * 2 - 1;
+
+    const whole = new TruePeakMeter(4);
+    const wholeMax = whole.process(s);
+
+    const chunked = new TruePeakMeter(4);
+    const sizes = [7, 128, 1, 300, 64, 3, 497]; // sums to 1000
+    let off = 0;
+    let chunkedMax = DB_FLOOR;
+    for (const size of sizes) {
+      chunkedMax = Math.max(chunkedMax, chunked.process(s.subarray(off, off + size)));
+      off += size;
+    }
+    expect(off).toBe(n);
+    expect(Math.abs(chunkedMax - wholeMax)).toBeLessThan(1e-6);
+  });
+
+  it("reset() drops the carried tail", () => {
+    const hot = sine(256, 0.25, 1.0, Math.PI / 4); // ~0 dBTP tone
+    const quiet = new Float32Array(256).fill(0.05); // -26.02 dBFS constant
+
+    // Without reset, the deferred boundary region of the hot tone is (correctly)
+    // reported in the next frame:
+    const carried = new TruePeakMeter(4);
+    carried.process(hot);
+    expect(carried.process(quiet)).toBeGreaterThan(-6);
+
+    // With reset, the history is gone and the quiet frame reads its own level.
+    const meter = new TruePeakMeter(4);
+    meter.process(hot);
+    meter.reset();
+    expect(meter.process(quiet)).toBeCloseTo(linToDb(0.05), 1);
+  });
+
+  it("returns DB_FLOOR for an empty frame without disturbing state", () => {
+    const meter = new TruePeakMeter(4);
+    expect(meter.process(new Float32Array(0))).toBe(DB_FLOOR);
+    // A hot tone straddled around an empty push still reads correctly.
+    const s = boundaryBurst(256, 128, 0.9, 32);
+    const a = meter.process(s.subarray(0, 128));
+    expect(meter.process(new Float32Array(0))).toBe(DB_FLOOR);
+    const b = meter.process(s.subarray(128));
+    expect(Math.max(a, b)).toBeGreaterThan(linToDb(0.9) - 0.1);
   });
 });
 

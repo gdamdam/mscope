@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useScopeDraw } from "./useAnimationFrame";
 import { drawFrozenBadge } from "./canvasOverlay";
+import { backingStorePx, useDevicePixelRatio } from "./useCanvasDpr";
 
 interface SpectrogramProps {
   /** Pull the latest dB magnitude spectrum for a channel from the engine. */
@@ -28,6 +29,23 @@ const RAMP: ReadonlyArray<readonly [number, number, number, number]> = [
   [1, 255, 255, 255], // white
 ];
 
+/** Width of one waterfall column in device pixels (one column = 1 logical px). */
+// eslint-disable-next-line react-refresh/only-export-components -- exported for tests
+export function columnDevicePx(dpr: number): number {
+  return Math.max(1, Math.round(dpr));
+}
+
+/**
+ * Nearest FFT bin for frequency `f`: bin i is centred at i·nyquist/bins (see
+ * binToFrequency), so the inverse is round(f/nyquist·bins). Clamped into
+ * [1, bins-1] — bin 0 (DC) is skipped, matching Spectrum's trace.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- exported for tests
+export function freqToBinIndex(f: number, nyquist: number, bins: number): number {
+  const bin = Math.round((f / nyquist) * bins);
+  return Math.max(1, Math.min(bins - 1, bin));
+}
+
 /** Scrolling spectrogram (waterfall): channel-0 magnitude over time, with a
  *  log-frequency Y axis and a perceptual dB colour ramp. */
 export function Spectrogram({
@@ -37,49 +55,85 @@ export function Spectrogram({
   frozen = false,
 }: SpectrogramProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dpr = useDevicePixelRatio();
   const sr = sampleRate > 0 ? sampleRate : 48000;
   const nyquist = sr / 2;
-  // Track whether the canvas has any content yet, so the first frame paints the
-  // background instead of scrolling garbage in from an empty buffer.
-  const paintedRef = useRef(false);
+  const w = backingStorePx(WIDTH, dpr);
+  const h = backingStorePx(HEIGHT, dpr);
+  // Waterfall history lives in an offscreen canvas (device pixels). Each draw
+  // blits it to the visible canvas; only animated frames scroll + append, so
+  // one-shot repaints (mount, freeze, dep change) never corrupt the history.
+  const offRef = useRef<HTMLCanvasElement | null>(null);
 
-  const draw = (): void => {
+  const getOffscreenCtx = (): CanvasRenderingContext2D | null => {
+    let off = offRef.current;
+    if (!off) {
+      off = document.createElement("canvas");
+      offRef.current = off;
+    }
+    if (off.width !== w || off.height !== h) {
+      // Resizing (dpr change) resets the bitmap; restart from background.
+      off.width = w;
+      off.height = h;
+      const octx = off.getContext("2d");
+      if (octx) {
+        octx.setTransform(1, 0, 0, 1, 0, 0);
+        octx.fillStyle = BG;
+        octx.fillRect(0, 0, w, h);
+      }
+    }
+    return off.getContext("2d");
+  };
+
+  const draw = (animating = false): void => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const octx = getOffscreenCtx();
+    const off = offRef.current;
+    if (!octx || !off) return;
 
-    if (!paintedRef.current) {
-      ctx.fillStyle = BG;
-      ctx.fillRect(0, 0, WIDTH, HEIGHT);
-      paintedRef.current = true;
-    }
-
-    // Scroll existing content left by 1px; the freed rightmost column is redrawn.
-    ctx.drawImage(canvas, -1, 0);
-    ctx.fillStyle = BG;
-    ctx.fillRect(WIDTH - 1, 0, 1, HEIGHT);
-
-    const spec = getSpectrum(0);
-    const x = WIDTH - 1;
-    if (spec && spec.length > 0) {
-      const bins = spec.length;
-      // Walk each output row (pixel) top→bottom, mapping y to a log frequency,
-      // then sampling the nearest bin's dB so the column matches Spectrum's axis.
-      for (let y = 0; y < HEIGHT; y++) {
-        const f = yToFreq(y, nyquist);
-        const bin = Math.round((f / nyquist) * (bins - 1));
-        const db = spec[Math.max(1, Math.min(bins - 1, bin))];
-        const t = (clampDb(db) - DB_MIN) / (DB_MAX - DB_MIN);
-        ctx.fillStyle = rampColor(t, frozen ? 0.5 : 1);
-        ctx.fillRect(x, y, 1, 1);
+    if (animating && !frozen) {
+      const spec = getSpectrum(0);
+      if (spec && spec.length > 0) {
+        // Advance: scroll history left one column, all in device pixels under
+        // an identity transform (drawImage of the dpr-scaled backing store).
+        const col = columnDevicePx(dpr);
+        octx.setTransform(1, 0, 0, 1, 0, 0);
+        octx.imageSmoothingEnabled = false;
+        octx.drawImage(off, -col, 0);
+        octx.fillStyle = BG;
+        octx.fillRect(w - col, 0, col, h);
+        const bins = spec.length;
+        // Walk each device row top→bottom, mapping y to a log frequency, then
+        // sampling the nearest bin's dB so the column matches Spectrum's axis.
+        for (let y = 0; y < h; y++) {
+          const f = yToFreq(y, nyquist, h);
+          const db = spec[freqToBinIndex(f, nyquist, bins)];
+          const t = (clampDb(db) - DB_MIN) / (DB_MAX - DB_MIN);
+          octx.fillStyle = rampColor(t, 1);
+          octx.fillRect(w - col, y, col, 1);
+        }
       }
     }
 
-    if (frozen) drawFrozenBadge(ctx);
+    // Repaint: blit the history 1:1 in device pixels (dimmed when frozen).
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalAlpha = frozen ? 0.5 : 1;
+    ctx.drawImage(off, 0, 0);
+    ctx.globalAlpha = 1;
+
+    if (frozen) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // badge is in logical coords
+      drawFrozenBadge(ctx);
+    }
   };
 
-  useScopeDraw(draw, active, [sampleRate, frozen]);
+  useScopeDraw(draw, active, [sampleRate, frozen, dpr]);
   useEffect(() => {
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -91,8 +145,8 @@ export function Spectrogram({
       <div className="canvas-wrap">
         <canvas
           ref={canvasRef}
-          width={WIDTH}
-          height={HEIGHT}
+          width={w}
+          height={h}
           role="img"
           aria-label="Scrolling spectrogram waterfall, channel 0"
         />
@@ -106,9 +160,9 @@ function clampDb(db: number): number {
 }
 
 /** Inverse of Spectrum's freqToX, applied to the vertical axis: y=0 is Nyquist
- *  (top), y=HEIGHT is F_MIN (bottom), spaced logarithmically. */
-function yToFreq(y: number, fMax: number): number {
-  const t = 1 - y / HEIGHT; // 0 at bottom (F_MIN), 1 at top (Nyquist)
+ *  (top), y=height is F_MIN (bottom), spaced logarithmically. */
+function yToFreq(y: number, fMax: number, height: number): number {
+  const t = 1 - y / height; // 0 at bottom (F_MIN), 1 at top (Nyquist)
   const logMin = Math.log10(F_MIN);
   const logMax = Math.log10(fMax);
   return Math.pow(10, logMin + t * (logMax - logMin));

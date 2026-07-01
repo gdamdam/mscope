@@ -24,7 +24,11 @@ export interface SessionSummary {
   durationMs: number;
   /** Sample rate of the last ingested snapshot (0 if none). */
   sampleRate: number;
-  /** Channel count of the last ingested snapshot (0 if none). */
+  /**
+   * Maximum channel count seen across the session (0 if none). NOT the latest
+   * snapshot's count: switching stereo → mono mid-session must not drop the
+   * accumulated channel-1 maxima from the summary.
+   */
   channelCount: number;
   /** Per-channel level aggregates; length === channelCount (empty if none). */
   channels: ChannelSummary[];
@@ -73,7 +77,6 @@ function freshChannel(): ChannelAccum {
 export class MeasurementSession {
   private durationMs = 0;
   private sampleRate = 0;
-  private channelCount = 0;
   private channels: ChannelAccum[] = [];
   private peakRmsDb = DB_FLOOR;
   private correlationMin: number | null = null;
@@ -92,7 +95,6 @@ export class MeasurementSession {
   ): void {
     this.durationMs += deltaMs;
     this.sampleRate = snapshot.sampleRate;
-    this.channelCount = snapshot.channelCount;
 
     // Grow the per-channel accumulator array to fit (channel count is stable
     // in practice, but be robust to it changing across snapshots).
@@ -137,18 +139,18 @@ export class MeasurementSession {
   }
 
   summary(): SessionSummary {
-    const channels: ChannelSummary[] = this.channels
-      .slice(0, this.channelCount)
-      .map((c) => ({
-        maxPeakDb: c.maxPeakDb,
-        maxTruePeakDb: c.maxTruePeakDb,
-        maxAbsDcOffset: c.maxAbsDcOffset,
-      }));
+    // Report ALL accumulated channels (max count seen), not the latest
+    // snapshot's — see the SessionSummary.channelCount doc.
+    const channels: ChannelSummary[] = this.channels.map((c) => ({
+      maxPeakDb: c.maxPeakDb,
+      maxTruePeakDb: c.maxTruePeakDb,
+      maxAbsDcOffset: c.maxAbsDcOffset,
+    }));
     const totalClipCount = this.channels.reduce((sum, c) => sum + c.clipCount, 0);
     return {
       durationMs: this.durationMs,
       sampleRate: this.sampleRate,
-      channelCount: this.channelCount,
+      channelCount: this.channels.length,
       channels,
       totalClipCount,
       peakRmsDb: this.peakRmsDb,
@@ -166,7 +168,6 @@ export class MeasurementSession {
   reset(): void {
     this.durationMs = 0;
     this.sampleRate = 0;
-    this.channelCount = 0;
     this.channels = [];
     this.peakRmsDb = DB_FLOOR;
     this.correlationMin = null;

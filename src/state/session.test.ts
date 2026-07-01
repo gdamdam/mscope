@@ -131,6 +131,30 @@ describe('MeasurementSession aggregation', () => {
     expect(s.summary().totalClipCount).toBe(5);
   });
 
+  it('retains per-channel maxima when channel count decreases (stereo → mono)', () => {
+    const s = new MeasurementSession();
+    s.ingest(
+      snap({
+        channels: [
+          ch({ peakDb: -6, truePeakDb: -5, dcOffset: 0.01 }),
+          ch({ peakDb: -3, truePeakDb: -2, dcOffset: 0.02 }),
+        ],
+        stereo: STEREO,
+      }),
+      100,
+    );
+    // Source switches to mono without a reset; channel 1 aggregates must survive.
+    s.ingest(snap({ channels: [ch({ peakDb: -12, truePeakDb: -11 })] }), 100);
+    const sum = s.summary();
+    expect(sum.channelCount).toBe(2);
+    expect(sum.channels).toHaveLength(2);
+    expect(sum.channels[1].maxPeakDb).toBe(-3);
+    expect(sum.channels[1].maxTruePeakDb).toBe(-2);
+    expect(sum.channels[1].maxAbsDcOffset).toBeCloseTo(0.02, 10);
+    // Channel 0 keeps accumulating across the switch.
+    expect(sum.channels[0].maxPeakDb).toBe(-6);
+  });
+
   it('reset returns a fresh zeroed summary', () => {
     const s = new MeasurementSession();
     s.ingest(

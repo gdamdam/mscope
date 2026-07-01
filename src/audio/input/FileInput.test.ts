@@ -38,18 +38,37 @@ function fakeContext(opts: {
   decoded?: AudioBuffer;
   decodeRejects?: unknown;
   source?: FakeBufferSource;
-}): { ctx: AudioContext; source: FakeBufferSource; decodeAudioData: ReturnType<typeof vi.fn> } {
+  /** Custom decode implementation (e.g. a deferred promise for race tests). */
+  decode?: () => Promise<AudioBuffer>;
+}): {
+  ctx: AudioContext;
+  source: FakeBufferSource;
+  decodeAudioData: ReturnType<typeof vi.fn>;
+  createBufferSource: ReturnType<typeof vi.fn>;
+} {
   const source = opts.source ?? makeFakeBufferSource();
   const decodeAudioData = vi.fn((_bytes: ArrayBuffer) =>
-    opts.decodeRejects !== undefined
-      ? Promise.reject(opts.decodeRejects)
-      : Promise.resolve(opts.decoded ?? ({} as AudioBuffer)),
+    opts.decode
+      ? opts.decode()
+      : opts.decodeRejects !== undefined
+        ? Promise.reject(opts.decodeRejects)
+        : Promise.resolve(opts.decoded ?? ({} as AudioBuffer)),
   );
+  const createBufferSource = vi.fn(() => source);
   const ctx = {
     decodeAudioData,
-    createBufferSource: vi.fn(() => source),
+    createBufferSource,
   } as unknown as AudioContext;
-  return { ctx, source, decodeAudioData };
+  return { ctx, source, decodeAudioData, createBufferSource };
+}
+
+/** A promise with externally-controlled settlement, for deterministic races. */
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 // --- Tests ---------------------------------------------------------------
@@ -161,6 +180,63 @@ describe("FileInput", () => {
 
     expect(source.stop).toHaveBeenCalledTimes(1);
     expect(source.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("stop() during decode: connect() rejects and never starts a looping source", async () => {
+    const d = deferred<AudioBuffer>();
+    const { ctx, source, createBufferSource } = fakeContext({
+      decode: () => d.promise,
+    });
+    const input = new FileInput(bytes);
+    await input.start();
+
+    const pending = input.connect(ctx);
+    input.stop(); // user stops while decodeAudioData is in flight
+    d.resolve({} as AudioBuffer);
+
+    await expect(pending).rejects.toThrow();
+    // A started looping AudioBufferSourceNode could never be stopped (stop()
+    // no-ops once "ended") and is pinned against GC — it must not exist.
+    expect(createBufferSource).not.toHaveBeenCalled();
+    expect(source.start).not.toHaveBeenCalled();
+    expect(input.state).toBe("ended");
+  });
+
+  it("dispose() during decode: no started looping node survives", async () => {
+    const d = deferred<AudioBuffer>();
+    const { ctx, source, createBufferSource } = fakeContext({
+      decode: () => d.promise,
+    });
+    const input = new FileInput(bytes);
+    await input.start();
+
+    const pending = input.connect(ctx);
+    input.dispose();
+    d.resolve({} as AudioBuffer);
+
+    await expect(pending).rejects.toThrow();
+    expect(createBufferSource).not.toHaveBeenCalled();
+    expect(source.start).not.toHaveBeenCalled();
+  });
+
+  it("a legitimate reconnect after a superseded decode still works", async () => {
+    const d = deferred<AudioBuffer>();
+    const stale = fakeContext({ decode: () => d.promise });
+    const input = new FileInput(bytes);
+    await input.start();
+
+    const pending = input.connect(stale.ctx);
+    input.stop();
+    d.resolve({} as AudioBuffer);
+    await expect(pending).rejects.toThrow();
+
+    // Restart + reconnect: decode/build must proceed normally this time.
+    await input.start();
+    const fresh = fakeContext({});
+    const node = await input.connect(fresh.ctx);
+    expect(node).toBe(fresh.source as unknown as AudioNode);
+    expect(fresh.source.start).toHaveBeenCalledTimes(1);
+    expect(input.state).toBe("live");
   });
 
   it("stop() before connect() is safe and sets state 'ended'", async () => {

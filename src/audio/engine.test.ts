@@ -92,6 +92,24 @@ function makeFakeSource(): {
   return { source, node, connect };
 }
 
+/** A promise with externally-controlled settlement, for deterministic races. */
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (v: T) => void;
+  reject: (e: unknown) => void;
+} {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/** Flush pending microtasks (and one macrotask turn). */
+const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
 let lastContext: FakeAudioContext;
 
 beforeEach(() => {
@@ -217,6 +235,94 @@ describe("createScopeEngine", () => {
 
     await engine.resume();
     expect(engine.state).toBe("running");
+  });
+
+  it("an overlapping setSource never fans out the superseded source and stops it", async () => {
+    const engine = createScopeEngine();
+    const a = makeFakeSource();
+    const d = deferred<AudioNode>();
+    a.connect.mockReturnValueOnce(d.promise);
+
+    // setSource(A) reaches its (pending) connect await...
+    const pA = engine.setSource(a.source);
+    await settle();
+    expect(a.connect).toHaveBeenCalledOnce();
+
+    // ...then setSource(B) completes fully.
+    const b = makeFakeSource();
+    await engine.setSource(b.source);
+    expect(b.node.connect).toHaveBeenCalledTimes(3);
+    expect(engine.state).toBe("running");
+
+    // A's decode finally resolves: its node must NOT join the graph, and the
+    // stale source must be stopped so its node can't linger forever.
+    d.resolve(a.node as unknown as AudioNode);
+    await pA;
+
+    expect(a.node.connect).not.toHaveBeenCalled();
+    expect(a.node.disconnect).toHaveBeenCalled();
+    expect(a.source.stop).toHaveBeenCalled();
+    // B's fan-out is untouched (no double metering, no wrong-node teardown).
+    expect(b.node.disconnect).not.toHaveBeenCalled();
+    expect(engine.state).toBe("running");
+  });
+
+  it("detach() during a pending setSource aborts it: no resume, state stays idle", async () => {
+    const engine = createScopeEngine();
+    const { source, node, connect } = makeFakeSource();
+    const d = deferred<AudioNode>();
+    connect.mockReturnValueOnce(d.promise);
+
+    const p = engine.setSource(source);
+    await settle();
+    expect(connect).toHaveBeenCalledOnce();
+
+    engine.detach(); // user hit Stop while the file was decoding
+    d.resolve(node as unknown as AudioNode);
+    await p;
+
+    expect(engine.state).toBe("idle");
+    // The continuation must not resume the just-suspended context...
+    expect(lastContext.resume).not.toHaveBeenCalled();
+    // ...nor connect the decoded source; the source is stopped instead.
+    expect(node.connect).not.toHaveBeenCalled();
+    expect(source.stop).toHaveBeenCalled();
+  });
+
+  it("dispose() during a pending setSource does not crash or revive the engine", async () => {
+    const engine = createScopeEngine();
+    const { source, node, connect } = makeFakeSource();
+    const d = deferred<AudioNode>();
+    connect.mockReturnValueOnce(d.promise);
+
+    const p = engine.setSource(source);
+    await settle();
+
+    engine.dispose();
+    d.resolve(node as unknown as AudioNode);
+    await expect(p).resolves.toBeUndefined(); // no crash on nulled branches
+
+    expect(engine.state).toBe("closed");
+    expect(node.connect).not.toHaveBeenCalled();
+  });
+
+  it("setAnalyserConfig removes the live source's edge into the old analyser", async () => {
+    const engine = createScopeEngine();
+    const { source, node } = makeFakeSource();
+    await engine.setSource(source);
+    const oldSplitter = lastContext.createChannelSplitter.mock.results[0]
+      .value as FakeSplitterNode;
+
+    engine.setAnalyserConfig({ fftSize: 4096 });
+
+    // The edge into the disposed analyser's splitter is removed (no orphan
+    // chain left pulled by the graph)...
+    expect(node.disconnect).toHaveBeenCalledWith(oldSplitter);
+    // ...and the source is re-connected to the rebuilt analyser's input.
+    const newSplitter = lastContext.createChannelSplitter.mock.results[1]
+      .value as FakeSplitterNode;
+    expect(newSplitter).not.toBe(oldSplitter);
+    expect(node.connect).toHaveBeenCalledWith(newSplitter);
   });
 
   it("dispose closes the context and is idempotent", async () => {

@@ -29,7 +29,7 @@ import {
 } from "../dsp/levels";
 import { linToDb } from "../dsp/util";
 import { stereoMetrics } from "../dsp/stereo";
-import { truePeakDb } from "../dsp/truePeak";
+import { truePeakDb, TruePeakMeter } from "../dsp/truePeak";
 import { GlitchDetector } from "../dsp/glitch";
 import { LoudnessMeter, type LoudnessSnapshot } from "../dsp/loudness";
 import {
@@ -94,6 +94,8 @@ export class MetersCore {
   private frameBuffers: FrameBuffer[] = [];
   /** Per-channel gapless discontinuity (click/dropout) detectors. */
   private glitchDetectors: GlitchDetector[] = [];
+  /** Per-channel stateful true-peak meters (carry FIR history across frames). */
+  private truePeakMeters: TruePeakMeter[] = [];
   private channelCount = 0;
 
   /** Total samples (per channel) processed since construction/reset. */
@@ -113,9 +115,19 @@ export class MetersCore {
     if (n === this.channelCount) return;
     // ~128 ms initial capacity; covers the ~64 ms frame window with headroom.
     const initialCap = Math.max(128, Math.round(this.sampleRate * 0.128));
-    this.analyzers = Array.from({ length: n }, () => new LevelAnalyzer(this.cfg));
-    this.frameBuffers = Array.from({ length: n }, () => new FrameBuffer(initialCap));
-    this.glitchDetectors = Array.from({ length: n }, () => new GlitchDetector());
+    // Only add/remove the delta: channels that persist keep their analyzers
+    // and detectors, so cumulative counters (clip/glitch) that are documented
+    // to survive until reset() stay monotonic across a channel-count change.
+    for (let c = this.channelCount; c < n; c++) {
+      this.analyzers[c] = new LevelAnalyzer(this.cfg);
+      this.frameBuffers[c] = new FrameBuffer(initialCap);
+      this.glitchDetectors[c] = new GlitchDetector();
+      this.truePeakMeters[c] = new TruePeakMeter(this.cfg.truePeakOversample);
+    }
+    this.analyzers.length = n;
+    this.frameBuffers.length = n;
+    this.glitchDetectors.length = n;
+    this.truePeakMeters.length = n;
     this.channelCount = n;
   }
 
@@ -171,7 +183,11 @@ export class MetersCore {
       lv.peakDb = linToDb(blockPeak(samples));
       lv.dcOffset = blockDc(samples);
       lv.clippedNow = countClipped(samples, this.cfg.clipThreshold) > 0;
-      lv.truePeakDb = truePeakDb(samples, this.cfg.truePeakOversample);
+      // Stateful true peak: the meter carries the FIR history tail across
+      // frame windows, so inter-sample excursions straddling two consecutive
+      // frames are measured against real neighboring samples instead of the
+      // replicate-padded edge a per-frame truePeakDb() would see.
+      lv.truePeakDb = this.truePeakMeters[c].process(samples);
       channels.push(lv);
     }
 
@@ -231,6 +247,7 @@ export class MetersCore {
     for (const a of this.analyzers) a.reset();
     for (const fb of this.frameBuffers) fb.clear();
     for (const g of this.glitchDetectors) g.reset();
+    for (const t of this.truePeakMeters) t.reset();
     this.loudness.reset();
     this.totalSamples = 0;
   }

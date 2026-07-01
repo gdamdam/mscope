@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { amplitudeHistogram, normalizeHistogram } from "../dsp/histogram";
 import { useScopeDraw } from "./useAnimationFrame";
 import { drawFrozenBadge } from "./canvasOverlay";
+import { backingStorePx, useDevicePixelRatio } from "./useCanvasDpr";
 
 interface HistogramProps {
   /** Pull the latest time-domain samples for a channel from the engine. */
@@ -38,6 +39,7 @@ export function Histogram({
   channel = 0,
 }: HistogramProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dpr = useDevicePixelRatio();
   const plotW = WIDTH - PAD_L;
   const plotH = HEIGHT - PAD_B;
 
@@ -46,6 +48,8 @@ export function Histogram({
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    // Backing store is dpr-scaled; keep all drawing in logical coordinates.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -100,7 +104,7 @@ export function Histogram({
   };
 
   // Redraw on the rAF loop while active; static single draw under reduced motion.
-  useScopeDraw(draw, active, [frozen, channel]);
+  useScopeDraw(draw, active, [frozen, channel, dpr]);
 
   // Also draw once on mount so the cleared view is correct.
   useEffect(() => {
@@ -114,8 +118,8 @@ export function Histogram({
       <div className="canvas-wrap">
         <canvas
           ref={canvasRef}
-          width={WIDTH}
-          height={HEIGHT}
+          width={backingStorePx(WIDTH, dpr)}
+          height={backingStorePx(HEIGHT, dpr)}
           role="img"
           aria-label="Amplitude histogram of sample values over [-1, +1]"
         />
