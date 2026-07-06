@@ -7,6 +7,8 @@ import { SourceSelector } from "./ui/SourceSelector";
 import { InputStatus } from "./ui/InputStatus";
 import { ToneControls } from "./ui/ToneControls";
 import { FilePicker } from "./ui/FilePicker";
+import { MbusPicker } from "./ui/MbusPicker";
+import { MbusInput } from "./audio/input";
 import { MonitorControl } from "./ui/MonitorControl";
 import { Waveform } from "./ui/Waveform";
 import { ScopeControls } from "./ui/ScopeControls";
@@ -109,6 +111,9 @@ export default function App(): JSX.Element {
     captureMic,
     captureTone,
     captureFile,
+    mbusSources,
+    openMbus,
+    captureMbus,
     stop,
     setMonitorGain,
     setAnalyserConfig,
@@ -186,6 +191,17 @@ export default function App(): JSX.Element {
         />
         <ToneControls onStart={(opts) => void captureTone(opts)} busy={busy} />
         <FilePicker onFile={(file) => void captureFile(file)} busy={busy} />
+        <MbusPicker
+          sources={mbusSources}
+          activeSourceId={
+            source instanceof MbusInput && canStopCapture(inputState)
+              ? source.sourceId
+              : null
+          }
+          busy={busy}
+          onOpen={openMbus}
+          onPick={(id) => void captureMbus(id)}
+        />
         <InputStatus
           kind={source?.kind ?? null}
           state={inputState}

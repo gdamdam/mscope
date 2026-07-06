@@ -13,10 +13,16 @@ import type {
 import {
   FileInput,
   GeneratorInput,
+  MbusInput,
   MicrophoneInput,
   TabCaptureInput,
   type GeneratorOptions,
 } from "../audio/input";
+import {
+  createMbusClient,
+  type MbusClient,
+  type SourceInfo,
+} from "../transport/mbus";
 import { MeasurementSession, type SessionSummary } from "../state/session";
 import { toJson, toMarkdown } from "../state/report";
 import {
@@ -68,10 +74,17 @@ export interface UseScope {
   /** Manually held session snapshot (via snapshot()), or null. */
   snapshotSummary: SessionSummary | null;
 
+  /** Sources advertised on the mbus link-bridge, or null before openMbus(). */
+  mbusSources: SourceInfo[] | null;
+
   captureTab(): Promise<void>;
   captureMic(): Promise<void>;
   captureTone(opts: GeneratorOptions): Promise<void>;
   captureFile(file: File | Blob): Promise<void>;
+  /** Lazily create + connect the mbus client (idempotent). Until this is
+   *  called, no client or socket exists — the bridge is never touched. */
+  openMbus(): void;
+  captureMbus(sourceId: string): Promise<void>;
   stop(): void;
   setMonitorGain(g: number): void;
   setAnalyserConfig(cfg: Partial<AnalyserConfig>): void;
@@ -114,6 +127,12 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
 
   const sourceRef = useRef<AudioInputSource | null>(null);
   const unsubInputRef = useRef<(() => void) | null>(null);
+  // Shared mbus client — created lazily by openMbus() (first user interaction
+  // with the mbus input), never at mount, so absent gear costs nothing. It
+  // outlives individual MbusInput sources (staying connected for discovery)
+  // and is torn down with the hook.
+  const mbusRef = useRef<MbusClient | null>(null);
+  const unsubMbusRef = useRef<(() => void) | null>(null);
   // Wall-clock of the previous frame, to derive deltaMs for session ingest.
   const lastFrameTsRef = useRef<number | null>(null);
   // Rolling history rings, mutated in place per frame; a fresh ScopeHistory
@@ -146,6 +165,7 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
   );
   const [snapshotSummary, setSnapshotSummary] =
     useState<SessionSummary | null>(null);
+  const [mbusSources, setMbusSources] = useState<SourceInfo[] | null>(null);
 
   // Create + own the engine for each mount, subscribe to frames, and dispose on
   // unmount (see the StrictMode note above). clipCount is cumulative; we ingest
@@ -225,6 +245,10 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
       unsubInputRef.current = null;
       sourceRef.current?.dispose();
       sourceRef.current = null;
+      unsubMbusRef.current?.();
+      unsubMbusRef.current = null;
+      mbusRef.current?.disconnect();
+      mbusRef.current = null;
       engine.dispose();
       engineRef.current = null;
     };
@@ -294,6 +318,26 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
   const captureFile = useCallback(
     async (file: File | Blob) => {
       await attach(new FileInput(file));
+    },
+    [attach],
+  );
+
+  const openMbus = useCallback(() => {
+    if (mbusRef.current) return;
+    const client = createMbusClient();
+    mbusRef.current = client;
+    setMbusSources(client.getSources());
+    unsubMbusRef.current = client.onSources(setMbusSources);
+    // Absent bridge is fine: the client retries in the background and simply
+    // keeps reporting no sources.
+    client.connect();
+  }, []);
+
+  const captureMbus = useCallback(
+    async (sourceId: string) => {
+      const client = mbusRef.current;
+      if (!client) return;
+      await attach(new MbusInput(client, sourceId));
     },
     [attach],
   );
@@ -396,10 +440,13 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
     history,
     analyserConfig,
     snapshotSummary,
+    mbusSources,
     captureTab,
     captureMic,
     captureTone,
     captureFile,
+    openMbus,
+    captureMbus,
     stop,
     setMonitorGain,
     setAnalyserConfig,

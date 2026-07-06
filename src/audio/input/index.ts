@@ -8,3 +8,4 @@ export { MicrophoneInput } from "./MicrophoneInput";
 export { TabCaptureInput } from "./TabCaptureInput";
 export { GeneratorInput, type GeneratorOptions } from "./GeneratorInput";
 export { FileInput } from "./FileInput";
+export { MbusInput } from "./MbusInput";

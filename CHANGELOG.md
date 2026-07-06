@@ -3,6 +3,23 @@
 All notable changes to mscope are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [1.1.1] — 2026-07-06
+
+Patch — mbus as a fifth input source.
+
+### Added
+- **mbus input**: scope another m-suite instrument tab's live output over the
+  local mpump link-bridge (`ws://localhost:19876`, peer-to-peer WebRTC) — an
+  alternative to tab-capture with no screen-share picker. The sibling
+  mbus-client is vendored verbatim under `src/transport/mbus/`; a new
+  `MbusInput` implements the `AudioInputSource` contract and a small picker
+  panel lists advertised sources. Nothing (no client, no socket) is created
+  until **Find sources** is clicked, and without the bridge the list simply
+  stays empty — zero behavior change for existing inputs.
+
+### Notes
+- 381 unit tests (3 new vendoring smoke tests); build + lint clean.
+
 ## [1.0.2] — 2026-06-30
 
 Patch — consistent cross-platform dropdowns.

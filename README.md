@@ -21,7 +21,7 @@ An *observational* meter: it never alters the audio it measures.
 
 ## Highlights
 
-- **Four sources, no upload** — capture another browser tab, the microphone/line in, an audio file, or a built-in test-tone generator. Nothing leaves the page.
+- **Five sources, no upload** — capture another browser tab, the microphone/line in, an audio file, a built-in test-tone generator, or another m-suite instrument over mbus. Nothing leaves the page.
 - **Lab-bench layout** — a large oscilloscope hero, an always-visible loudness + levels rail, and grouped sections for frequency, stereo field, analysis, and diagnostics.
 - **Sample-accurate metering** in an AudioWorklet: peak, RMS, true-peak (dBTP), and ITU-R BS.1770 **LUFS** (momentary / short-term / integrated) with **target compliance**.
 - **Deep visual analysis** — spectrum (with tilt, peak-hold, and a cursor readout), spectrogram, ⅓-octave RTA, goniometer, and a loudness/level history graph.
@@ -58,6 +58,7 @@ Every view and control, top to bottom.
 - **Microphone / line in** — `getUserMedia()` with echo-cancellation / noise-suppression / auto-gain disabled, so you measure the real signal.
 - **Audio file** — drop a file on the picker (or browse) to analyze it.
 - **Test tone** — sine (set frequency), white, or pink noise, for calibrating or testing a chain.
+- **mbus** — scope another m-suite instrument tab's live output directly (peer-to-peer WebRTC), an alternative to tab-capture that needs no screen-share picker. Rides the local mpump link-bridge at `ws://localhost:19876`; harmless without it — the source list just stays empty. Nothing happens until you click **Find sources**.
 - **Input status** — idle → requesting → live → ended/error, with a Stop control. If a tab share has no audio track, mscope tells you to re-share with "Share tab audio" enabled.
 
 ### Oscilloscope (Waveform)

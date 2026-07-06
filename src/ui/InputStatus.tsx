@@ -19,6 +19,7 @@ const KIND_LABEL: Record<AudioInputKind, string> = {
   "media-stream": "Media stream",
   "audio-file": "Audio file",
   generator: "Test tone",
+  mbus: "mbus",
 };
 
 const STATE_LABEL: Record<AudioInputState, string> = {

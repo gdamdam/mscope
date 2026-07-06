@@ -3,7 +3,8 @@ export type AudioInputKind =
   | "microphone"
   | "media-stream"
   | "audio-file"
-  | "generator";
+  | "generator"
+  | "mbus";
 export type AudioInputState = "idle" | "requesting" | "live" | "muted" | "ended" | "error";
 export interface AudioInputSource {
   readonly kind: AudioInputKind;
