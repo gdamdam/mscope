@@ -3,6 +3,17 @@
 All notable changes to mscope are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [1.1.3] — 2026-07-07
+
+Patch — vendored mbus-client sync.
+
+### Changed
+- **mbus transport**: synced vendored `src/transport/mbus/` with upstream
+  mbus-client 0.2.0 — a subscription now reports `live` only when the
+  RTCPeerConnection reaches `connectionState 'connected'` (instead of at
+  ontrack/SDP time), preventing a false live badge when ICE fails.
+  `protocol.ts` was already byte-identical; only `client.ts` changed.
+
 ## [1.1.2] — 2026-07-07
 
 Patch — documentation polish.
