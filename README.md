@@ -8,9 +8,9 @@ Entirely in the browser.
 
 An *observational* meter: it never alters the audio it measures.
 
-[![version](https://img.shields.io/badge/version-1.0.0-6c8f3a)](./package.json)
+[![version](https://img.shields.io/badge/version-1.1.2-6c8f3a)](./package.json)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](./LICENSE)
-[![tests](https://img.shields.io/badge/tests-313%20passing-2ea043)](#verification)
+[![tests](https://img.shields.io/badge/tests-381%20passing-2ea043)](#verification)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](./tsconfig.json)
 [![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)](https://react.dev)
 [![Vite](https://img.shields.io/badge/Vite-6-646cff?logo=vite&logoColor=white)](https://vite.dev)
@@ -126,7 +126,7 @@ source → AnalyserNode       → waveform / spectrum / spectrogram / goniometer
 npm run check   # lint + test + build
 ```
 
-**313 unit tests** cover all pure DSP and the React hook/components. LUFS is validated against ITU-R BS.1770 / EBU Tech 3341 synthetic vectors. Web-Audio graph behaviour can't run headless — it's covered by the manual checklist below.
+**381 unit tests** cover all pure DSP and the React hook/components. LUFS is validated against ITU-R BS.1770 / EBU Tech 3341 synthetic vectors. Web-Audio graph behaviour can't run headless — it's covered by the manual checklist below.
 
 ## Permissions & privacy
 
@@ -168,6 +168,7 @@ src/
   dsp/                       pure, tested DSP (levels, truePeak, loudness, loudnessRange,
                              stereo, spectral, dynamics, histogram, glitch, util)
   analysis/                  derived-metric + loudness-target types
+  transport/                 vendored mbus-client (client, protocol) for the mbus input
   state/                     measurement session + JSON/Markdown report
   ui/                        useScope hook + all panels, controls, and the Help guide
   App.tsx  main.tsx  index.css

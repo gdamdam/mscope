@@ -3,6 +3,15 @@
 All notable changes to mscope are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [1.1.2] — 2026-07-07
+
+Patch — documentation polish.
+
+### Changed
+- **README**: corrected the stale version (1.0.0 → 1.1.2) and test-count
+  (313 → 381) badges, updated the Verification test count, and added the
+  `src/transport/` (vendored mbus-client) entry to the repository map.
+
 ## [1.1.1] — 2026-07-06
 
 Patch — mbus as a fifth input source.
