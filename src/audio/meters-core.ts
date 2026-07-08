@@ -48,6 +48,14 @@ import type { AnalysisFrame } from "./engineTypes";
 const MAX_CHANNELS = 2;
 
 /**
+ * Shared zero-length probe block. `buildFrame` runs on the render thread at the
+ * frame cadence and must not allocate; feeding this shared empty array to
+ * `LevelAnalyzer.process` reads the analyzer's running state without minting a
+ * throwaway `Float32Array` each frame. Callees only read it, never mutate.
+ */
+const EMPTY_BLOCK = new Float32Array(0);
+
+/**
  * Growable mono sample accumulator for one channel over a frame window. Grows
  * geometrically and is logically cleared (length reset to 0, capacity kept) by
  * `clear`, so steady-state framing allocates no new buffers.
@@ -176,7 +184,7 @@ export class MetersCore {
       // rmsDb (trailing window) and the cumulative clipCount come from the
       // analyzer's running state — advanced per-quantum in pushQuantum. We
       // process a zero-length block to read that state without double-counting.
-      const lv = this.analyzers[c].process(new Float32Array(0));
+      const lv = this.analyzers[c].process(EMPTY_BLOCK);
       // peak / dcOffset / clippedNow / true-peak are frame-window quantities:
       // recompute them over the samples accumulated for THIS frame so they
       // report the window we display, not the (empty) probe block above.
@@ -204,6 +212,13 @@ export class MetersCore {
     // Signal classification uses channel 0's windowed RMS (the reference channel).
     const signal = classifySignal(channels[0].rmsDb, this.cfg);
 
+    // Build the counts in one pass; the previous slice().map() allocated an
+    // intermediate detector array on the render thread every frame.
+    const glitchCounts: number[] = [];
+    for (let c = 0; c < this.channelCount; c++) {
+      glitchCounts.push(this.glitchDetectors[c].count);
+    }
+
     const metrics: MetricsSnapshot = {
       timeMs: (this.totalSamples / this.sampleRate) * 1000,
       sampleRate: this.sampleRate,
@@ -211,9 +226,7 @@ export class MetersCore {
       channels,
       stereo,
       signal,
-      glitchCounts: this.glitchDetectors
-        .slice(0, this.channelCount)
-        .map((d) => d.count),
+      glitchCounts,
     };
 
     for (const fb of this.frameBuffers) fb.clear();
@@ -237,8 +250,8 @@ export class MetersCore {
 
   /** ChannelLevels for a never-fed channel: a fresh analyzer on empty input. */
   private analyzersFallback(): ChannelLevels {
-    const lv = new LevelAnalyzer(this.cfg).process(new Float32Array(0));
-    lv.truePeakDb = truePeakDb(new Float32Array(0), this.cfg.truePeakOversample);
+    const lv = new LevelAnalyzer(this.cfg).process(EMPTY_BLOCK);
+    lv.truePeakDb = truePeakDb(EMPTY_BLOCK, this.cfg.truePeakOversample);
     return lv;
   }
 

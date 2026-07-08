@@ -3,6 +3,19 @@
 All notable changes to mscope are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [1.1.4] — 2026-07-08
+
+Patch — render-thread allocation cleanup.
+
+### Changed
+- **meters worklet**: `MetersCore.buildFrame` (runs on the audio render thread
+  at the ~15 Hz frame cadence) no longer mints throwaway objects each frame —
+  a shared `EMPTY_BLOCK` replaces the per-channel `new Float32Array(0)` state
+  probes, and `glitchCounts` is built in a single loop instead of an
+  intermediate `slice().map()`. Behaviour is unchanged; this just honours the
+  zero-allocation render-thread rule the tool relies on to avoid inducing the
+  GC discontinuities it diagnoses.
+
 ## [1.1.3] — 2026-07-07
 
 Patch — vendored mbus-client sync.
