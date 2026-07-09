@@ -134,13 +134,15 @@ describe("useScope", () => {
 
     await flush(async () => {
       engine.emit(
-        frame([ch({ peakDb: -6, rmsDb: -18 })], null, { integratedLufs: -20 }),
+        frame([ch({ peakDb: -6, truePeakDb: -5, rmsDb: -18 })], null, {
+          integratedLufs: -20,
+        }),
       );
     });
 
     expect(api.dynamics).not.toBeNull();
     expect(api.dynamics!.crestDb[0]).toBeCloseTo(12); // -6 - (-18)
-    expect(api.dynamics!.plrDb).toBeCloseTo(14); // -6 - (-20)
+    expect(api.dynamics!.plrDb).toBeCloseTo(15); // true peak: -5 - (-20)
     expect(api.spectral).not.toBeNull();
     expect(api.spectral!.bandsDb.length).toBeGreaterThan(0);
 

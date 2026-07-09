@@ -209,14 +209,20 @@ export function useScope(createEngine: CreateScopeEngine): UseScope {
       });
 
       // Dynamics: crest per channel, PLR from loudest peak, LRA + noise floor
-      // from the accumulated history.
+      // from the accumulated history. PLR prefers true peak (catches inter-sample
+      // overs) and falls back to sample peak when true peak is unavailable (NaN).
       const maxPeakDb = channels.reduce(
         (m, c) => Math.max(m, c.peakDb),
         Number.NEGATIVE_INFINITY,
       );
+      const maxTruePeakDb = channels.reduce(
+        (m, c) => (Number.isFinite(c.truePeakDb) ? Math.max(m, c.truePeakDb) : m),
+        Number.NEGATIVE_INFINITY,
+      );
+      const plrPeakDb = Number.isFinite(maxTruePeakDb) ? maxTruePeakDb : maxPeakDb;
       setDynamics({
         crestDb: channels.map((c) => crestFactorDb(c.peakDb, c.rmsDb)),
-        plrDb: plrDb(maxPeakDb, f.loudness.integratedLufs),
+        plrDb: plrDb(plrPeakDb, f.loudness.integratedLufs),
         lra: loudnessRange(ring.shortTermLufs),
         noiseFloorDb: estimateNoiseFloorDb(ring.rmsDb),
       });

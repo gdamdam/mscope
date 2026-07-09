@@ -20,7 +20,12 @@ export function dbSpectrumToLinear(dbSpec: Float32Array): Float32Array {
   return out;
 }
 
-/** Spectral centroid (Hz): Σ(f_i·mag_i)/Σ(mag_i). 0 if the spectrum has no energy. */
+/**
+ * Spectral centroid (Hz): Σ(f_i·mag_i)/Σ(mag_i). 0 if the spectrum has no energy.
+ * Skips DC (bin 0): it contributes nothing to the numerator but its magnitude
+ * would inflate the denominator and bias the centroid low, and it is not a
+ * "frequency" — same convention as `dominantFrequency`.
+ */
 export function spectralCentroid(
   mag: Float32Array,
   sampleRate: number,
@@ -29,7 +34,7 @@ export function spectralCentroid(
   const hzPerBin = sampleRate / fftSize;
   let weighted = 0;
   let total = 0;
-  for (let i = 0; i < mag.length; i++) {
+  for (let i = 1; i < mag.length; i++) {
     const m = mag[i];
     weighted += i * hzPerBin * m;
     total += m;

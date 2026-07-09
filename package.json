@@ -1,7 +1,7 @@
 {
   "name": "mscope",
   "private": true,
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Local-first, in-browser audio scope and diagnostic instrument.",
   "license": "AGPL-3.0-only",
   "type": "module",
