@@ -3,6 +3,10 @@
 All notable changes to mscope are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow semver.
 
+## [1.1.6] — 2026-07-13
+
+Patch — vendored mbus client synced from canonical (mbus-client 0.2.1): mbus-source subscriptions survive bridge drops as `connecting` instead of failing permanently; ICE candidates buffer until the remote description is set; stale peer-connection callbacks no longer tear down a replacement connection.
+
 ## [1.1.4] — 2026-07-08
 
 Patch — render-thread allocation cleanup.
